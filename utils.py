@@ -1,50 +1,36 @@
 import pandas as pd
+import streamlit as st
 
 def analyze_data(files):
-    dataframes = []
-    courses = set()
-    students = set()
+    all_data = []
 
     for file in files:
-        df_raw = pd.read_excel(file, header=None) if file.name.endswith("xlsx") else pd.read_csv(file, header=None)
+        # Leer desde la fila 9 (índice 8)
+        df = pd.read_excel(file, header=8)
 
-        header_row = None
-        for i, row in df_raw.iterrows():
-            row_str = row.astype(str).str.lower()
-            if row_str.str.contains("nombre estudiante").any():
-                header_row = i
-                break
+        # Intentar extraer el nombre del curso desde la celda C3
+        try:
+            metadata = pd.read_excel(file, header=None, nrows=5, usecols="C")
+            curso_value = metadata.iloc[2, 0] if not pd.isna(metadata.iloc[2, 0]) else "Curso desconocido"
+        except:
+            curso_value = "Curso desconocido"
 
-        if header_row is None:
-            continue
+        df["curso"] = curso_value
 
-        df = pd.read_excel(file, header=header_row) if file.name.endswith("xlsx") else pd.read_csv(file, header=header_row)
+        # Normalizar nombres de columnas
+        df.columns = df.columns.astype(str).str.strip().str.lower().str.replace(" ", "_")
 
-        # Limpieza de columnas
-        clean_columns = []
-        for idx, col in enumerate(df.columns):
-            try:
-                col_str = str(col).lower().strip()
-                if col_str == "" or col_str == "nan":
-                    col_str = f"columna_{idx}"
-            except:
-                col_str = f"columna_{idx}"
-            clean_columns.append(col_str)
-        df.columns = clean_columns
+        # Renombrar nombre de estudiante si es necesario
+        if "nombre_estudiante" not in df.columns:
+            posibles = [col for col in df.columns if "estudiante" in col]
+            if posibles:
+                df.rename(columns={posibles[0]: "nombre_estudiante"}, inplace=True)
 
-        # Verificar existencia de columnas necesarias
-        if "curso" not in df.columns or "nombre estudiante" not in df.columns:
-            continue
+        all_data.append(df)
 
-        df["curso"] = df["curso"].astype(str)
-        df["nombre estudiante"] = df["nombre estudiante"].astype(str)
+    full_df = pd.concat(all_data, ignore_index=True)
 
-        courses.update(df["curso"].unique())
-        students.update(df["nombre estudiante"].unique())
-        dataframes.append(df)
+    cursos = full_df["curso"].unique()
+    estudiantes = full_df["nombre_estudiante"].nunique() if "nombre_estudiante" in full_df.columns else "No encontrado"
 
-    if not dataframes:
-        raise ValueError("No se encontraron columnas válidas ('curso' y 'nombre estudiante') en los archivos.")
-
-    combined = pd.concat(dataframes, ignore_index=True)
-    return combined, courses, len(students)
+    return full_df, cursos, estudiantes
