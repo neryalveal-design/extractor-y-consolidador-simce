@@ -1,54 +1,36 @@
-
 import pandas as pd
-import unicodedata
-
-def normalizar_texto(texto):
-    if pd.isna(texto):
-        return ""
-    texto = str(texto).strip().lower()
-    texto = unicodedata.normalize('NFD', texto).encode('ascii', 'ignore').decode('utf-8')
-    return texto
+import streamlit as st
 
 def analyze_data(files):
     all_data = []
 
     for file in files:
+        # Leer desde la fila 9 (índice 8)
+        df = pd.read_excel(file, header=8)
+
+        # Intentar extraer el nombre del curso desde la celda C3
         try:
-            df = pd.read_excel(file, header=None)
+            metadata = pd.read_excel(file, header=None, nrows=5, usecols="C")
+            curso_value = metadata.iloc[2, 0] if not pd.isna(metadata.iloc[2, 0]) else "Curso desconocido"
+        except:
+            curso_value = "Curso desconocido"
 
-            # Buscar la fila donde está "NOMBRE ESTUDIANTE"
-            header_row = df.apply(lambda row: row.astype(str).str.contains("NOMBRE ESTUDIANTE", case=False, na=False)).any(axis=1)
-            header_index = header_row[header_row].index[0]
+        df["curso"] = curso_value
 
-            df = pd.read_excel(file, header=header_index)
+        # Normalizar nombres de columnas
+        df.columns = df.columns.astype(str).str.strip().str.lower().str.replace(" ", "_")
 
-            # Normalizar nombres de columnas
-            df.columns = [str(col).strip().lower() for col in df.columns]
+        # Renombrar nombre de estudiante si es necesario
+        if "nombre_estudiante" not in df.columns:
+            posibles = [col for col in df.columns if "estudiante" in col]
+            if posibles:
+                df.rename(columns={posibles[0]: "nombre_estudiante"}, inplace=True)
 
-            if "nombre estudiante" not in df.columns:
-                raise ValueError("No se encontró la columna 'nombre estudiante'")
+        all_data.append(df)
 
-            df.rename(columns={"nombre estudiante": "nombre"}, inplace=True)
+    full_df = pd.concat(all_data, ignore_index=True)
 
-            # Inferir curso desde alguna celda previa o agregar manualmente
-            curso = None
-            for i in range(header_index):
-                fila = df.iloc[i] if i < len(df) else None
-                if fila is not None and fila.astype(str).str.contains("medio", case=False).any():
-                    curso = fila.dropna().values[-1]
-                    break
-            if not curso:
-                curso = "curso_desconocido"
+    cursos = full_df["curso"].unique()
+    estudiantes = full_df["nombre_estudiante"].nunique() if "nombre_estudiante" in full_df.columns else "No encontrado"
 
-            df["curso"] = curso
-            df["nombre"] = df["nombre"].apply(normalizar_texto)
-            all_data.append(df[["nombre", "curso"] + [col for col in df.columns if col not in ["nombre", "curso"]]])
-
-        except Exception as e:
-            raise RuntimeError(f"Error al procesar {file.name}: {e}")
-
-    final_df = pd.concat(all_data, ignore_index=True)
-    cursos = final_df["curso"].unique()
-    estudiantes = final_df["nombre"].nunique()
-
-    return final_df, cursos, estudiantes
+    return full_df, cursos, estudiantes
