@@ -3,13 +3,24 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-# Función de limpieza
+# Función de limpieza con fix
 def limpiar_dataframe(df):
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+    # Asegura que los nombres de columna sean strings
+    df.columns = df.columns.map(str)
+
+    # Eliminar columnas sin nombre
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed', na=False)]
+
+    # Eliminar columnas duplicadas
     df = df.loc[:, ~df.columns.duplicated()]
+
+    # Limpiar espacios y pasar todo a minúscula
     df.columns = [col.strip().lower() for col in df.columns]
+
+    # Filtrar solo columnas útiles
     columnas_validas = [col for col in df.columns if "nombre" in col or "puntaje" in col or "curso" in col]
     df = df[columnas_validas]
+
     return df
 
 # Validación
@@ -72,22 +83,3 @@ if uploaded_files:
         )
     else:
         st.warning("Ningún archivo válido fue procesado.")
-        def limpiar_dataframe(df):
-    # Asegura que los nombres de columna sean strings
-    df.columns = df.columns.map(str)
-
-    # Eliminar columnas sin nombre
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed', na=False)]
-
-    # Eliminar columnas duplicadas
-    df = df.loc[:, ~df.columns.duplicated()]
-
-    # Limpiar espacios y pasar todo a minúscula
-    df.columns = [col.strip().lower() for col in df.columns]
-
-    # Filtrar solo columnas útiles
-    columnas_validas = [col for col in df.columns if "nombre" in col or "puntaje" in col or "curso" in col]
-    df = df[columnas_validas]
-
-    return df
-
