@@ -1,23 +1,24 @@
-# SIMCE y Ensayos Consolidator
+# 📊 Extractor de Puntajes SIMCE y Ensayos
 
-Esta app creada con Streamlit permite:
+Esta aplicación te permite:
 
 1. Consolidar múltiples archivos de ensayo por curso.
-2. Agregar nuevos puntajes a una estructura base por grupo.
+2. Agregar puntajes a estructuras existentes por grupo.
+3. Exportar resultados a Excel o PDF.
 
-## Cómo ejecutar
+## 🚀 Uso
 
-1. Instala las dependencias:
-```
+```bash
 pip install -r requirements.txt
-```
-
-2. Ejecuta la app:
-```
 streamlit run app.py
 ```
 
-## Estructura
+## 📁 Estructura del proyecto
 
-- `app.py`: Aplicación principal unificada
-- `requirements.txt`: Dependencias
+- `app.py`: Interfaz principal Streamlit
+- `utils.py`: Procesamiento de datos
+- `excel_exporter.py`: Exportación a Excel
+- `pdf_exporter.py`: Exportación a PDF
+- `.streamlit/config.toml`: Tema visual
+- `assets/`: Logos o recursos visuales
+- `sample_data/`: Datos de muestra
