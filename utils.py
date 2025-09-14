@@ -6,38 +6,24 @@ def analyze_data(files):
     students = set()
 
     for file in files:
-        # Leer archivo original
-        df_raw = pd.read_excel(file, header=None) if file.name.endswith("xlsx") else pd.read_csv(file, header=None)
-
-        # Buscar fila que contiene "nombre" o "estudiante"
-        start_row = None
-        for i, row in df_raw.iterrows():
-            row_str = row.astype(str).str.lower()
-            if row_str.str.contains("nombre").any() or row_str.str.contains("estudiante").any():
-                start_row = i
-                break
-
-        if start_row is None:
-            continue  # no se encontró encabezado válido
-
-        # Volver a leer con encabezado desde fila detectada
-        df = pd.read_excel(file, header=start_row) if file.name.endswith("xlsx") else pd.read_csv(file, header=start_row)
-
-        # Normalizar nombres de columnas
-        clean_columns = []
-        for col in df.columns:
+        # Intentar leer el archivo desde varias filas posibles (3 a 6)
+        found_valid_structure = False
+        for header_row in range(3, 7):
             try:
-                col_str = str(col).lower().strip()
+                df = pd.read_excel(file, header=header_row) if file.name.endswith("xlsx") else pd.read_csv(file, header=header_row)
+                df.columns = [str(col).lower().strip() for col in df.columns]
+
+                # Verificar que tenga las columnas necesarias
+                if "curso" in df.columns and "nombre" in df.columns:
+                    found_valid_structure = True
+                    break
             except Exception:
-                col_str = "columna_sin_nombre"
-            clean_columns.append(col_str)
-        df.columns = clean_columns
+                continue
 
-        # Verificación de columnas mínimas necesarias
-        if "curso" not in df.columns or "nombre" not in df.columns:
-            continue
+        if not found_valid_structure:
+            continue  # saltar archivos sin estructura clara
 
-        # Convertir valores clave a texto
+        # Convertir columnas clave
         df["curso"] = df["curso"].astype(str)
         df["nombre"] = df["nombre"].astype(str)
 
