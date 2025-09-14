@@ -7,6 +7,17 @@ st.title("📊 Consolidador de Ensayos por Curso")
 
 uploaded_files = st.file_uploader("Sube archivos Excel o CSV", type=["xlsx", "csv"], accept_multiple_files=True)
 
+def deduplicate_columns(columns):
+    seen = {}
+    new_cols = []
+    for col in columns:
+        col_base = str(col).strip()
+        count = seen.get(col_base, 0)
+        new_col = col_base if count == 0 else f"{col_base}_{count}"
+        new_cols.append(new_col)
+        seen[col_base] = count + 1
+    return new_cols
+
 if uploaded_files:
     try:
         dataframes = []
@@ -17,8 +28,8 @@ if uploaded_files:
             # Leer archivo con manejo de errores
             df = pd.read_excel(file, header=0, dtype=str) if file.name.endswith("xlsx") else pd.read_csv(file, dtype=str)
 
-            # Renombrar columnas duplicadas automáticamente
-            df.columns = pd.io.parsers.ParserBase({'names': df.columns})._maybe_dedup_names(df.columns)
+            # Deduplicar columnas manualmente
+            df.columns = deduplicate_columns(df.columns)
 
             # Limpiar y normalizar columnas
             df.columns = [str(c).strip().lower() for c in df.columns]
