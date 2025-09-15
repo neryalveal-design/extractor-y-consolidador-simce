@@ -2,6 +2,20 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+# ================================
+# Encabezado con logo y título
+# ================================
+col1, col2 = st.columns([1, 4])  # 1 parte para el logo, 4 para el texto
+
+with col1:
+    st.image("logo liceo.png", width=80)  # reemplaza "logo.png" por la ruta real de tu logo (puede ser local o un link)
+
+with col2:
+    st.markdown(
+        "<h2 style='margin-bottom:0;'>Departamento de Lenguaje</h2>"
+        "<h4 style='margin-top:0;'>Liceo Polivalente San Nicolás</h4>",
+        unsafe_allow_html=True
+    )
 
 st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE")
 
