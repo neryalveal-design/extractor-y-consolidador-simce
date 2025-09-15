@@ -301,7 +301,7 @@ if uploaded_consol and 'df_todos' in st.session_state:
     )
 
 # ================================
-# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (ajustada para reutilizar consolidado)
+# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (corregida)
 # ================================
 import matplotlib.pyplot as plt
 
@@ -312,7 +312,7 @@ if 'xls_consolidado' in st.session_state:
     hojas_est = xls_est.sheet_names
 
     # Selección de curso (hoja)
-    curso_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_est, key="curso_est")
+    curso_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_est)
 
     df_curso = pd.read_excel(xls_est, sheet_name=curso_sel)
 
@@ -327,16 +327,13 @@ if 'xls_consolidado' in st.session_state:
         st.error("No se encontró una columna de nombres de estudiantes en esta hoja.")
     else:
         # Selección de estudiante
-        estudiante_sel = st.selectbox("Elige un estudiante", df_curso[col_nombres].dropna().unique(), key="estudiante_sel")
+        estudiante_sel = st.selectbox("Elige un estudiante", df_curso[col_nombres].dropna().unique())
 
         # Extraer fila del estudiante
         df_est = df_curso[df_curso[col_nombres] == estudiante_sel].copy()
 
-        # Detectar columnas de puntajes (numéricas o que contengan 'simce' o 'puntaje')
-        cols_puntajes = [
-            c for c in df_est.columns
-            if c != col_nombres and pd.api.types.is_numeric_dtype(df_est[c])
-        ]
+        # Detectar columnas de puntajes
+        cols_puntajes = [c for c in df_est.columns if c != col_nombres and pd.api.types.is_numeric_dtype(df_est[c])]
         for c in df_est.columns:
             if c != col_nombres and ("simce" in str(c).lower() or "puntaje" in str(c).lower()):
                 if c not in cols_puntajes:
@@ -345,23 +342,20 @@ if 'xls_consolidado' in st.session_state:
         if not cols_puntajes:
             st.warning("No se encontraron columnas de puntajes en esta hoja.")
         else:
-            # Ordenar columnas por nombre (para simular cronología)
+            # Ordenar columnas (simular cronología)
             cols_puntajes = sorted(cols_puntajes)
 
             puntajes = df_est[cols_puntajes].iloc[0].tolist()
 
-            # Filtrar solo valores válidos
             x = [c for c, p in zip(cols_puntajes, puntajes) if pd.notna(p)]
             y = [p for p in puntajes if pd.notna(p)]
 
             if not y:
                 st.info(f"No hay puntajes disponibles para {estudiante_sel}.")
             else:
-                # Crear gráfico
                 fig, ax = plt.subplots(figsize=(7, 4))
                 ax.plot(x, y, marker="o", linestyle="-", color="blue")
 
-                # Anotar valores en cada punto
                 for i, (xi, yi) in enumerate(zip(x, y)):
                     ax.text(i, yi + 5, str(int(yi)), ha="center", fontsize=9)
 
@@ -369,68 +363,57 @@ if 'xls_consolidado' in st.session_state:
                 ax.set_ylabel("Puntaje")
                 ax.set_xlabel("Ensayos")
                 ax.grid(True)
-
-                # 🔧 Ajustar etiquetas del eje X
                 ax.set_xticks(range(len(x)))
                 ax.set_xticklabels(x, fontsize=8, rotation=30)
 
                 st.pyplot(fig)
 
-                # Promedio
                 promedio = sum(y) / len(y)
                 st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
 else:
-    st.warning("⚠️ Primero debes ejecutar la función 3 (Consolidación de puntajes) para cargar el archivo consolidado.")
+    st.warning("⚠️ Primero debes ejecutar la función 3 (Consolidación de puntajes).")
 
 
 # ================================
-# 📉 FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO (reutilizando el archivo de Función 4)
+# 📉 FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO (corregida)
 # ================================
 st.header("📉 Estudiantes con rendimiento más bajo")
 
-if 'xls_est' in locals() and uploaded_consolidado_est:
-    hojas_bajos = xls_est.sheet_names
+if 'xls_consolidado' in st.session_state:
+    xls_low = st.session_state['xls_consolidado']
+    hojas_low = xls_low.sheet_names
 
-    curso_sel_bajos = st.selectbox("Elige el curso (hoja de Excel)", hojas_bajos, key="curso_bajos")
-    df_bajos = pd.read_excel(xls_est, sheet_name=curso_sel_bajos)
+    for hoja in hojas_low:
+        st.subheader(f"Curso: {hoja}")
+        df_low = pd.read_excel(xls_low, sheet_name=hoja)
 
-    # Detectar columna de nombres
-    col_nombres = None
-    for col in df_bajos.columns:
-        if "nombre" in str(col).lower() and "estudiante" in str(col).lower():
-            col_nombres = col
-            break
+        # Detectar columna de nombres
+        col_nombres = None
+        for col in df_low.columns:
+            if "nombre" in str(col).lower() and "estudiante" in str(col).lower():
+                col_nombres = col
+                break
 
-    if col_nombres is None:
-        st.error("No se encontró una columna de nombres de estudiantes en esta hoja.")
-    else:
-        # Detectar columnas de puntajes (numéricas o que contengan 'simce' o 'puntaje')
+        if col_nombres is None:
+            st.warning(f"No se encontró columna de nombres en la hoja {hoja}")
+            continue
+
+        # Detectar columnas de puntajes
         cols_puntajes = [
-            c for c in df_bajos.columns
-            if c != col_nombres and pd.api.types.is_numeric_dtype(df_bajos[c])
+            c for c in df_low.columns
+            if c != col_nombres and ("simce" in str(c).lower() or "puntaje" in str(c).lower())
         ]
-        for c in df_bajos.columns:
-            if c != col_nombres and ("simce" in str(c).lower() or "puntaje" in str(c).lower()):
-                if c not in cols_puntajes:
-                    cols_puntajes.append(c)
-
         if not cols_puntajes:
-            st.warning("No se encontraron columnas de puntajes en esta hoja.")
-        else:
-            # Tomar la última columna como el ensayo más reciente
-            ultima_col = sorted(cols_puntajes)[-1]
-            st.write(f"📌 Considerando el ensayo más reciente: **{ultima_col}**")
+            st.warning(f"No se encontraron columnas de puntajes en {hoja}")
+            continue
 
-            # Ordenar por puntaje ascendente
-            df_top10 = df_bajos[[col_nombres, ultima_col]].copy()
-            df_top10 = df_top10.dropna(subset=[ultima_col])  # eliminar filas sin puntaje
-            df_top10 = df_top10.sort_values(by=ultima_col, ascending=True).head(10)
+        ultima_col = sorted(cols_puntajes)[-1]
 
-            st.subheader(f"🔟 Estudiantes con menor puntaje en {curso_sel_bajos}")
-            st.dataframe(df_top10)
-
+        # Ordenar y mostrar los 10 más bajos
+        df_low_sorted = df_low[[col_nombres, ultima_col]].dropna().sort_values(by=ultima_col, ascending=True).head(10)
+        st.table(df_low_sorted)
 else:
-    st.info("⚠️ Primero sube un archivo en la sección 'Análisis por estudiante'.")
+    st.warning("⚠️ Primero debes ejecutar la función 3 (Consolidación de puntajes).")
 
 # ================================
 # 📝 FUNCIÓN 6: ANÁLISIS DE PREGUNTAS Y DISTRACTORES 
