@@ -97,7 +97,6 @@ if uploaded_file:
         file_name="excel_normalizado.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
 # 📊 Función 2: Análisis por curso (ajustada con títulos y columnas)
 import matplotlib.pyplot as plt
 
@@ -198,7 +197,4 @@ if uploaded_file:
 
         st.pyplot(fig_total)
 
-        )
-        ax_total.set_title("Distribución total de desempeño")
-        st.pyplot(fig_total)
 
