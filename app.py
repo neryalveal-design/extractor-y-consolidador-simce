@@ -295,6 +295,9 @@ if _file_consolidado and uploaded_file:
                     df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                     resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                     continue
+# Guardar en session_state para funciones siguientes
+output_consol.seek(0)  # Rebobinar el buffer
+st.session_state['xls_consolidado'] = pd.ExcelFile(output_consol)
 
                 # Normalizar nombres del consolidado
                 df_cons["__key"] = df_cons[col_nombres].map(_normalizar_nombre)
