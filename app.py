@@ -205,49 +205,61 @@ if uploaded_consolidado and uploaded_file:  # Debe existir también el archivo c
     # Leer el archivo consolidado
     df_consolidado = pd.read_excel(uploaded_consolidado)
 
-    # Procesar el archivo complejo para obtener los nuevos puntajes
-    xls_new = pd.ExcelFile(uploaded_file)
-    hojas_new = xls_new.sheet_names
+    # Detectar columna de nombres automáticamente
+    col_nombres_consolidado = None
+    for col in df_consolidado.columns:
+        if "nombre" in str(col).lower() and "estudiante" in str(col).lower():
+            col_nombres_consolidado = col
+            break
 
-    # Usaremos el consolidado de todas las hojas (puedes cambiar a solo una hoja si quieres)
-    df_nuevos = pd.DataFrame()
-    for hoja in hojas_new:
-        df_raw = pd.read_excel(xls_new, sheet_name=hoja, header=None)
-        df_extraido = extraer_datos(df_raw)
-        if df_extraido is not None:
-            df_nuevos = pd.concat([df_nuevos, df_extraido], ignore_index=True)
-
-    if not df_nuevos.empty:
-        # Normalizar los nombres de estudiantes para hacer coincidir
-        df_consolidado["NOMBRE ESTUDIANTE"] = df_consolidado["NOMBRE ESTUDIANTE"].astype(str).str.strip().str.lower()
-        df_nuevos["NOMBRE ESTUDIANTE"] = df_nuevos["NOMBRE ESTUDIANTE"].astype(str).str.strip().str.lower()
-
-        # Hacer merge (left join) entre consolidado y nuevos puntajes
-        df_merge = pd.merge(
-            df_consolidado,
-            df_nuevos[["NOMBRE ESTUDIANTE", "SIMCE 1"]],
-            on="NOMBRE ESTUDIANTE",
-            how="left"
-        )
-
-        # Renombrar la nueva columna como "SIMCE Nuevo"
-        df_merge.rename(columns={"SIMCE 1": "SIMCE Nuevo"}, inplace=True)
-
-        st.write("Vista previa del consolidado actualizado:")
-        st.dataframe(df_merge)
-
-        # Exportar a Excel
-        from io import BytesIO
-        output_consolidado = BytesIO()
-        with pd.ExcelWriter(output_consolidado, engine="xlsxwriter") as writer:
-            df_merge.to_excel(writer, index=False, sheet_name="Consolidado")
-        st.download_button(
-            label="📥 Descargar consolidado actualizado",
-            data=output_consolidado.getvalue(),
-            file_name="consolidado_actualizado.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    if col_nombres_consolidado is None:
+        st.error("No se encontró ninguna columna que contenga los nombres de los estudiantes en el consolidado.")
     else:
-        st.error("No se encontraron puntajes nuevos para consolidar.")
+        # Procesar el archivo complejo para obtener los nuevos puntajes
+        xls_new = pd.ExcelFile(uploaded_file)
+        hojas_new = xls_new.sheet_names
+
+        df_nuevos = pd.DataFrame()
+        for hoja in hojas_new:
+            df_raw = pd.read_excel(xls_new, sheet_name=hoja, header=None)
+            df_extraido = extraer_datos(df_raw)
+            if df_extraido is not None:
+                df_nuevos = pd.concat([df_nuevos, df_extraido], ignore_index=True)
+
+        if not df_nuevos.empty:
+            # Normalizar nombres
+            df_consolidado[col_nombres_consolidado] = df_consolidado[col_nombres_consolidado].astype(str).str.strip().str.lower()
+            df_nuevos["NOMBRE ESTUDIANTE"] = df_nuevos["NOMBRE ESTUDIANTE"].astype(str).str.strip().str.lower()
+
+            # Hacer merge
+            df_merge = pd.merge(
+                df_consolidado,
+                df_nuevos[["NOMBRE ESTUDIANTE", "SIMCE 1"]],
+                left_on=col_nombres_consolidado,
+                right_on="NOMBRE ESTUDIANTE",
+                how="left"
+            )
+
+            # Renombrar columna nueva
+            df_merge.rename(columns={"SIMCE 1": "SIMCE Nuevo"}, inplace=True)
+            df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)  # quitar columna duplicada
+
+            st.write("Vista previa del consolidado actualizado:")
+            st.dataframe(df_merge)
+
+            # Exportar
+            from io import BytesIO
+            output_consolidado = BytesIO()
+            with pd.ExcelWriter(output_consolidado, engine="xlsxwriter") as writer:
+                df_merge.to_excel(writer, index=False, sheet_name="Consolidado")
+            st.download_button(
+                label="📥 Descargar consolidado actualizado",
+                data=output_consolidado.getvalue(),
+                file_name="consolidado_actualizado.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.error("No se encontraron puntajes nuevos para consolidar.")
+
 
 
