@@ -15,7 +15,7 @@ with col2:
         """
         <div style="text-align: center;">
             <h2 style="margin-bottom:0;">Departamento de Lenguaje</h2>
-            <h4 style="margin-top:0;">Liceo Polivalente San Nicolás</h4>
+            <h4 style="margin-top:0;">Liceo Bicentenario de Excelencia Polivalente San Nicolás</h4>
         </div>
         """,
         unsafe_allow_html=True
