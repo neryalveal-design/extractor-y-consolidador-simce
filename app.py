@@ -98,7 +98,7 @@ if uploaded_file:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# 📊 Función 2: Análisis por curso (usando archivo ya cargado y función extraer_datos)
+# 📊 Función 2: Análisis por curso (ajustada con títulos y columnas)
 import matplotlib.pyplot as plt
 
 st.header("📈 Análisis por curso")
@@ -126,9 +126,12 @@ if uploaded_file:
     total_categorias = {"Insuficiente": 0, "Intermedio": 0, "Adecuado": 0}
     total_estudiantes = 0
 
+    col1, col2 = st.columns(2)  # 🔥 dos columnas para los gráficos
+    toggle = True  # alternar entre columnas
+
     for hoja in hojas_analisis:
         df_raw = pd.read_excel(xls_analisis, sheet_name=hoja, header=None)
-        df = extraer_datos(df_raw)  # 👈 reutilizamos la función de limpieza
+        df = extraer_datos(df_raw)
 
         if df is None or "SIMCE 1" not in df.columns:
             st.warning(f"La hoja '{hoja}' no pudo procesarse. Se omitirá.")
@@ -151,7 +154,7 @@ if uploaded_file:
         total_estudiantes += suma_curso
 
         # Gráfico circular por curso
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(5, 5))
         valores = list(categorias.values())
         etiquetas = list(categorias.keys())
         colores = ["red", "yellow", "green"]
@@ -167,11 +170,16 @@ if uploaded_file:
             startangle=90
         )
         ax.set_title(f"Distribución por desempeño - {hoja}")
-        st.pyplot(fig)
+
+        if toggle:
+            col1.pyplot(fig)
+        else:
+            col2.pyplot(fig)
+        toggle = not toggle
 
     # Gráfico global
     if total_estudiantes > 0:
-        fig_total, ax_total = plt.subplots()
+        fig_total, ax_total = plt.subplots(figsize=(5, 5))
         valores = list(total_categorias.values())
         etiquetas = list(total_categorias.keys())
         colores = ["red", "yellow", "green"]
@@ -185,6 +193,11 @@ if uploaded_file:
             autopct="%1.1f%%",
             shadow=True,
             startangle=90
+        )
+        ax_total.set_title("📊 Distribución total de desempeño")
+
+        st.pyplot(fig_total)
+
         )
         ax_total.set_title("Distribución total de desempeño")
         st.pyplot(fig_total)
