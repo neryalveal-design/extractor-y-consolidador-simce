@@ -219,62 +219,93 @@ if uploaded_file:
         st.pyplot(fig_total)
 
 # ================================
-# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES
+# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES (corregida: sin nombres en la última columna)
 # ================================
+from io import BytesIO
+import unicodedata, re
+
 st.header("📂 Consolidación de puntajes")
+
+def _norm(s: str) -> str:
+    if s is None:
+        return ""
+    s = str(s).strip().lower().replace("\u00a0", " ")
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
 
 uploaded_consolidado = st.file_uploader(
     "Sube el archivo consolidado anterior (todas las hojas de cursos)",
-    type=["xlsx"],
-    key="consolidado_anterior"
+    type=["xlsx"], key="consolidado_fix"
 )
 
 if uploaded_file and uploaded_consolidado:
-    xls_nuevo = pd.ExcelFile(uploaded_file)
-    xls_consol = pd.ExcelFile(uploaded_consolidado)
+    xls_comp = pd.ExcelFile(uploaded_file)            # archivo complejo (Función 1)
+    xls_cons = pd.ExcelFile(uploaded_consolidado)     # consolidado histórico
 
-    output_consol = BytesIO()
     resumen = []
-
+    output_consol = BytesIO()
     with pd.ExcelWriter(output_consol, engine="xlsxwriter") as writer:
-        for hoja in xls_consol.sheet_names:
-            df_cons = pd.read_excel(xls_consol, sheet_name=hoja)
+        for hoja in xls_cons.sheet_names:
+            df_cons = pd.read_excel(xls_cons, sheet_name=hoja)
 
-            # Buscar columna de nombres
+            # Detectar columna de nombres en el consolidado
             col_nombres = None
             for col in df_cons.columns:
-                col_low = str(col).lower()
-                if "nombre" in col_low and "estudiante" in col_low:
+                c = str(col).lower()
+                if "nombre" in c and "estudiante" in c:
                     col_nombres = col
                     break
 
             if col_nombres is None:
+                # No hay columna de nombres; guardar tal cual
                 df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # Normalizar nombres y unir
-            df_cons["__key"] = df_cons[col_nombres].astype(str).str.strip().str.lower()
-            df_nuevos = pd.read_excel(xls_nuevo, sheet_name=hoja)
-            if "NOMBRE ESTUDIANTE" in df_nuevos.columns:
-                df_nuevos["__key"] = df_nuevos["NOMBRE ESTUDIANTE"].astype(str).str.strip().str.lower()
+            # Intentar extraer para esta hoja los nuevos puntajes desde el archivo complejo
+            try:
+                df_raw = pd.read_excel(xls_comp, sheet_name=hoja, header=None)
+                df_new = extraer_datos(df_raw) if 'extraer_datos' in globals() else None
+            except Exception:
+                df_new = None
 
-                df_merge = df_cons.merge(
-                    df_nuevos[["__key", "SIMCE 1"]],
-                    on="__key", how="left"
-                )
-
-                # Contar coincidencias
-                coinc = df_merge["SIMCE 1"].notna().sum()
-                sincoinc = df_merge["SIMCE 1"].isna().sum()
-                resumen.append({"Hoja": hoja, "Coincidencias": int(coinc), "Sin coincidencia": int(sincoinc)})
-
-                df_merge.drop(columns=["__key"], inplace=True)
-                df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
-            else:
+            if df_new is None or df_new.empty or "NOMBRE ESTUDIANTE" not in df_new.columns:
+                # No hay datos nuevos; agregar columna vacía (si no existe) y guardar
+                if "SIMCE Nuevo" not in df_cons.columns:
+                    df_cons["SIMCE Nuevo"] = pd.NA
                 df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
+                continue
 
+            # Normalizar claves
+            df_cons["__key"] = df_cons[col_nombres].map(_norm)
+            df_new["__key"]  = df_new["NOMBRE ESTUDIANTE"].map(_norm)
+
+            # Unir por clave normalizada (solo traemos la nota)
+            df_merge = df_cons.merge(
+                df_new[["__key", "SIMCE 1"]], on="__key", how="left"
+            )
+
+            # Crear la nueva columna con tipo numérico
+            df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
+
+            # Eliminar TODAS las columnas auxiliares que podrían colarse al final
+            df_merge.drop(columns=["__key", "SIMCE 1"], inplace=True, errors="ignore")
+            # MUY IMPORTANTE: no dejar la "NOMBRE ESTUDIANTE" del lado derecho del merge
+            if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
+                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
+
+            # Contar coincidencias
+            coinc = int(df_merge["SIMCE Nuevo"].notna().sum())
+            sinco = int(df_merge["SIMCE Nuevo"].isna().sum())
+            resumen.append({"Hoja": hoja, "Coincidencias": coinc, "Sin coincidencia": sinco})
+
+            # Guardar hoja
+            df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
+
+    # Mostrar resumen y permitir descarga
     st.subheader("📋 Resumen de consolidación")
     st.dataframe(pd.DataFrame(resumen))
 
@@ -285,8 +316,12 @@ if uploaded_file and uploaded_consolidado:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Guardar consolidado actualizado en session_state para reusar
+    # Reutilizar en funciones 4 y 5 sin volver a subir
+    output_consol.seek(0)
     st.session_state["consolidado_xls"] = pd.ExcelFile(output_consol)
+elif uploaded_consolidado and not uploaded_file:
+    st.info("⚠️ Sube también el archivo complejo en la sección 'EXTRAER PUNTAJES' para poder consolidar.")
+
 
 # ================================
 # 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE
