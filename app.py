@@ -219,28 +219,20 @@ if uploaded_file:
         st.pyplot(fig_total)
 
 # ================================
-# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES (corregida)
+# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES
 # ================================
-from io import BytesIO
-
 st.header("📂 Consolidación de puntajes")
 
 uploaded_consol = st.file_uploader(
     "Sube el archivo consolidado anterior (todas las hojas de cursos)",
     type=["xlsx"],
-    key="consolidador"
+    key="consolidado"
 )
 
-if uploaded_consol and 'df_todos' in st.session_state:
-    # Archivo consolidado original
+if uploaded_consol and "df_cursos" in st.session_state:
     xls_consol = pd.ExcelFile(uploaded_consol)
     hojas_consol = xls_consol.sheet_names
-
-    # DataFrame con puntajes nuevos (Función 1)
-    df_nuevos = st.session_state['df_todos']
-
-    # Normalizar nombres de estudiantes nuevos
-    df_nuevos["__key"] = df_nuevos["NOMBRE ESTUDIANTE"].map(lambda x: str(x).strip().lower())
+    df_nuevos = pd.concat(st.session_state["df_cursos"].values(), ignore_index=True)
 
     resumen = []
     output_consol = BytesIO()
@@ -248,7 +240,7 @@ if uploaded_consol and 'df_todos' in st.session_state:
         for hoja in hojas_consol:
             df_cons = pd.read_excel(xls_consol, sheet_name=hoja)
 
-            # Detectar columna de nombres
+            # Detectar columna de nombres en el consolidado
             col_nombres = None
             for col in df_cons.columns:
                 col_low = str(col).lower()
@@ -257,13 +249,14 @@ if uploaded_consol and 'df_todos' in st.session_state:
                     break
 
             if col_nombres is None:
-                # Si no hay columna de nombres, guardamos hoja tal cual
+                # Si no hay columna de nombres, escribimos tal cual
                 df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # Normalizar nombres del consolidado
-            df_cons["__key"] = df_cons[col_nombres].map(lambda x: str(x).strip().lower())
+            # Normalizar nombres
+            df_cons["__key"] = df_cons[col_nombres].map(_normalizar_nombre)
+            df_nuevos["__key"] = df_nuevos["NOMBRE ESTUDIANTE"].map(_normalizar_nombre)
 
             # Unir por clave normalizada
             df_merge = df_cons.merge(
@@ -272,19 +265,17 @@ if uploaded_consol and 'df_todos' in st.session_state:
                 how="left"
             )
 
-            # Agregar nueva columna de puntaje
-            nombre_columna = f"SIMCE Nuevo"
-            df_merge[nombre_columna] = df_merge["SIMCE 1"]
+            # Agregar la nueva columna al consolidado
+            df_cons["SIMCE Nuevo"] = df_merge["SIMCE 1"]
 
-            # Guardar hoja en el nuevo consolidado
-            df_merge.drop(columns=["__key", "SIMCE 1"], inplace=True)
-            df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
+            # Guardar hoja actualizada
+            df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
 
-            coincidencias = df_merge[nombre_columna].notna().sum()
-            sin_coincidencia = len(df_merge) - coincidencias
+            coincidencias = df_cons["SIMCE Nuevo"].notna().sum()
+            sin_coincidencia = df_cons["SIMCE Nuevo"].isna().sum()
             resumen.append({"Hoja": hoja, "Coincidencias": coincidencias, "Sin coincidencia": sin_coincidencia})
 
-    # ✅ Guardar en session_state para funciones siguientes
+    # ✅ Guardar consolidado en memoria para funciones siguientes
     output_consol.seek(0)
     st.session_state['xls_consolidado'] = pd.ExcelFile(output_consol)
 
@@ -292,13 +283,17 @@ if uploaded_consol and 'df_todos' in st.session_state:
     st.subheader("📋 Resumen de consolidación")
     st.dataframe(pd.DataFrame(resumen))
 
-    # Botón para descargar
+    # Botón de descarga
     st.download_button(
-        "📥 Descargar CONSOLIDADO ACTUALIZADO (todas las hojas)",
+        label="💾 Descargar CONSOLIDADO ACTUALIZADO (todas las hojas)",
         data=output_consol,
         file_name="consolidado_actualizado.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+else:
+    if "df_cursos" not in st.session_state:
+        st.warning("⚠️ Primero debes ejecutar la función 1 (Extraer puntajes) antes de consolidar.")
 
 # ================================
 # 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (corregida)
