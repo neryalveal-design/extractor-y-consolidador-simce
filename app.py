@@ -415,22 +415,15 @@ if uploaded_consolidado_est:
                 st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
 
 # ================================
-# 📉 FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO
+# 📉 FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO (reutilizando el archivo de Función 4)
 # ================================
 st.header("📉 Estudiantes con rendimiento más bajo")
 
-uploaded_bajos = st.file_uploader(
-    "Sube el archivo consolidado actualizado (con todas las hojas y puntajes)",
-    type=["xlsx"],
-    key="consolidado_bajos"
-)
-
-if uploaded_bajos:
-    xls_bajos = pd.ExcelFile(uploaded_bajos)
-    hojas_bajos = xls_bajos.sheet_names
+if 'xls_est' in locals() and uploaded_consolidado_est:
+    hojas_bajos = xls_est.sheet_names
 
     curso_sel_bajos = st.selectbox("Elige el curso (hoja de Excel)", hojas_bajos, key="curso_bajos")
-    df_bajos = pd.read_excel(xls_bajos, sheet_name=curso_sel_bajos)
+    df_bajos = pd.read_excel(xls_est, sheet_name=curso_sel_bajos)
 
     # Detectar columna de nombres
     col_nombres = None
@@ -467,14 +460,5 @@ if uploaded_bajos:
             st.subheader(f"🔟 Estudiantes con menor puntaje en {curso_sel_bajos}")
             st.dataframe(df_top10)
 
-            # Descargar en Excel
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                df_top10.to_excel(writer, sheet_name="Bajos", index=False)
-            st.download_button(
-                label="⬇️ Descargar ranking en Excel",
-                data=output.getvalue(),
-                file_name=f"bajos_{curso_sel_bajos}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-
+else:
+    st.info("⚠️ Primero sube un archivo en la sección 'Análisis por estudiante'.")
