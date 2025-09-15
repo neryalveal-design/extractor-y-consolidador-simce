@@ -219,138 +219,87 @@ if uploaded_file:
         st.pyplot(fig_total)
 
 # ================================
-# 📚 FUNCIÓN 3 (MEJORADA): CONSOLIDACIÓN DE PUNTAJES (multi-hojas + normalización robusta)
+# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES (corregida)
 # ================================
-import unicodedata, re
 from io import BytesIO
 
-st.header("📚 Consolidación de puntajes (multi-hojas + normalización)")
+st.header("📂 Consolidación de puntajes")
 
-def _normalizar_nombre(s: str) -> str:
-    if s is None:
-        return ""
-    s = str(s).strip().lower()
-    s = s.replace("\u00a0", " ")                  # NBSP -> espacio normal
-    s = unicodedata.normalize("NFKD", s)          # descomponer acentos
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))  # quitar diacríticos
-    s = re.sub(r"[^a-z0-9\s]", " ", s)            # dejar letras/números/espacios
-    s = re.sub(r"\s+", " ", s).strip()            # colapsar espacios
-    return s
+uploaded_consol = st.file_uploader(
+    "Sube el archivo consolidado anterior (todas las hojas de cursos)",
+    type=["xlsx"],
+    key="consolidador"
+)
 
-# Reusar archivo consolidado si ya existe en memoria; si no, pedirlo.
-if "uploaded_consolidado" in globals() and uploaded_consolidado is not None:
-    _file_consolidado = uploaded_consolidado
-else:
-    _file_consolidado = st.file_uploader(
-        "Sube el archivo consolidado de puntajes anteriores (todas las hojas)",
-        type=["xlsx"],
-        key="consolidado_v2"
+if uploaded_consol and 'df_todos' in st.session_state:
+    # Archivo consolidado original
+    xls_consol = pd.ExcelFile(uploaded_consol)
+    hojas_consol = xls_consol.sheet_names
+
+    # DataFrame con puntajes nuevos (Función 1)
+    df_nuevos = st.session_state['df_todos']
+
+    # Normalizar nombres de estudiantes nuevos
+    df_nuevos["__key"] = df_nuevos["NOMBRE ESTUDIANTE"].map(lambda x: str(x).strip().lower())
+
+    resumen = []
+    output_consol = BytesIO()
+    with pd.ExcelWriter(output_consol, engine="xlsxwriter") as writer:
+        for hoja in hojas_consol:
+            df_cons = pd.read_excel(xls_consol, sheet_name=hoja)
+
+            # Detectar columna de nombres
+            col_nombres = None
+            for col in df_cons.columns:
+                col_low = str(col).lower()
+                if "nombre" in col_low and "estudiante" in col_low:
+                    col_nombres = col
+                    break
+
+            if col_nombres is None:
+                # Si no hay columna de nombres, guardamos hoja tal cual
+                df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
+                resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
+                continue
+
+            # Normalizar nombres del consolidado
+            df_cons["__key"] = df_cons[col_nombres].map(lambda x: str(x).strip().lower())
+
+            # Unir por clave normalizada
+            df_merge = df_cons.merge(
+                df_nuevos[["__key", "SIMCE 1"]],
+                on="__key",
+                how="left"
+            )
+
+            # Agregar nueva columna de puntaje
+            nombre_columna = f"SIMCE Nuevo"
+            df_merge[nombre_columna] = df_merge["SIMCE 1"]
+
+            # Guardar hoja en el nuevo consolidado
+            df_merge.drop(columns=["__key", "SIMCE 1"], inplace=True)
+            df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
+
+            coincidencias = df_merge[nombre_columna].notna().sum()
+            sin_coincidencia = len(df_merge) - coincidencias
+            resumen.append({"Hoja": hoja, "Coincidencias": coincidencias, "Sin coincidencia": sin_coincidencia})
+
+    # ✅ Guardar en session_state para funciones siguientes
+    output_consol.seek(0)
+    st.session_state['xls_consolidado'] = pd.ExcelFile(output_consol)
+
+    # Mostrar resumen
+    st.subheader("📋 Resumen de consolidación")
+    st.dataframe(pd.DataFrame(resumen))
+
+    # Botón para descargar
+    st.download_button(
+        "📥 Descargar CONSOLIDADO ACTUALIZADO (todas las hojas)",
+        data=output_consol,
+        file_name="consolidado_actualizado.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-if _file_consolidado and uploaded_file:
-    # 1) Extraer TODOS los puntajes nuevos desde el archivo complejo ya cargado
-    xls_new = pd.ExcelFile(uploaded_file)
-    hojas_new = xls_new.sheet_names
-
-    df_nuevos = pd.DataFrame()
-    for hoja in hojas_new:
-        df_raw = pd.read_excel(xls_new, sheet_name=hoja, header=None)
-        df_extraido = extraer_datos(df_raw)  # <- reutilizamos tu limpiador/selector
-        if df_extraido is not None and not df_extraido.empty:
-            df_nuevos = pd.concat([df_nuevos, df_extraido], ignore_index=True)
-
-    if df_nuevos.empty:
-        st.error("No se encontraron puntajes nuevos para consolidar.")
-    else:
-        # Normalizar nombres en df_nuevos y asegurar tipo numérico de puntajes
-        df_nuevos["__key"] = df_nuevos["NOMBRE ESTUDIANTE"].map(_normalizar_nombre)
-        df_nuevos["SIMCE 1"] = pd.to_numeric(df_nuevos["SIMCE 1"], errors="coerce")
-
-        # Si hay nombres repetidos en distintos cursos, nos quedamos con el primer valor no nulo
-        df_nuevos = df_nuevos.sort_index()
-        df_nuevos = df_nuevos.drop_duplicates(subset="__key", keep="first")
-
-        # 2) Abrir el consolidado original y recorrer TODAS sus hojas
-        xls_consol = pd.ExcelFile(_file_consolidado)
-        hojas_consol = xls_consol.sheet_names
-
-        # Para auditar coincidencias
-        resumen = []
-
-        output_consol = BytesIO()
-        with pd.ExcelWriter(output_consol, engine="xlsxwriter") as writer:
-            for hoja in hojas_consol:
-                df_cons = pd.read_excel(xls_consol, sheet_name=hoja)
-
-                # Detectar la columna de nombres en el consolidado (flexible)
-                col_nombres = None
-                for col in df_cons.columns:
-                    col_low = str(col).lower()
-                    if "nombre" in col_low and "estudiante" in col_low:
-                        col_nombres = col
-                        break
-
-                if col_nombres is None:
-                    # Si no hay columna de nombres, escribimos tal cual
-                    df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
-                    resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
-                    continue
-
-                # Normalizar nombres del consolidado
-                df_cons["__key"] = df_cons[col_nombres].map(_normalizar_nombre)
-
-                # Unir por clave normalizada
-                df_merge = df_cons.merge(
-                    df_nuevos[["__key", "SIMCE 1"]],
-                    on="__key",
-                    how="left"
-                )
-
-                # Renombrar columna nueva y retirar auxiliar
-                if "SIMCE 1" in df_merge.columns:
-                    df_merge.rename(columns={"SIMCE 1": "SIMCE Nuevo"}, inplace=True)
-                if "__key" in df_merge.columns:
-                    df_merge.drop(columns="__key", inplace=True)
-
-                # Conteo de coincidencias/no coincidencias en esta hoja
-                coincidencias = df_merge["SIMCE Nuevo"].notna().sum()
-                sin_coinc = df_merge["SIMCE Nuevo"].isna().sum()
-                resumen.append({"Hoja": hoja, "Coincidencias": int(coincidencias), "Sin coincidencia": int(sin_coinc)})
-
-                # Escribir hoja actualizada
-                df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
-
-        # 3) Mostrar resumen de mapeo y entregar descarga
-        st.subheader("📋 Resumen de consolidación")
-        st.dataframe(pd.DataFrame(resumen))
-
-        st.download_button(
-            label="📥 Descargar CONSOLIDADO ACTUALIZADO (todas las hojas)",
-            data=output_consol.getvalue(),
-            file_name="consolidado_actualizado.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        # 4) TIP opcional: mostrar nombres sin match por hoja (para auditoría fina)
-        with st.expander("🔍 Ver nombres sin coincidencia por hoja"):
-            xls_consol2 = pd.ExcelFile(_file_consolidado)
-            for hoja in xls_consol2.sheet_names:
-                df_cons2 = pd.read_excel(xls_consol2, sheet_name=hoja)
-                col_nombres = None
-                for col in df_cons2.columns:
-                    col_low = str(col).lower()
-                    if "nombre" in col_low and "estudiante" in col_low:
-                        col_nombres = col
-                        break
-                if col_nombres is None:
-                    continue
-                df_cons2["__key"] = df_cons2[col_nombres].map(_normalizar_nombre)
-                df_no_match = df_cons2[~df_cons2["__key"].isin(df_nuevos["__key"])]
-                st.write(f"**{hoja}** — Sin coincidencia: {len(df_no_match)}")
-                st.dataframe(df_no_match[[col_nombres]])
-# Guardar en session_state para funciones siguientes
-output_consol.seek(0)  # Rebobinar el buffer
-st.session_state['xls_consolidado'] = pd.ExcelFile(output_consol)
 # ================================
 # 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (ajustada para reutilizar consolidado)
 # ================================
