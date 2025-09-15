@@ -327,8 +327,9 @@ if _file_consolidado and uploaded_file:
                 df_no_match = df_cons2[~df_cons2["__key"].isin(df_nuevos["__key"])]
                 st.write(f"**{hoja}** — Sin coincidencia: {len(df_no_match)}")
                 st.dataframe(df_no_match[[col_nombres]])
+
 # ================================
-# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE
+# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (mejorada)
 # ================================
 import matplotlib.pyplot as plt
 
@@ -362,41 +363,53 @@ if uploaded_consolidado_est:
         # Selección de estudiante
         estudiante_sel = st.selectbox("Elige un estudiante", df_curso[col_nombres].dropna().unique())
 
-        # Extraer fila de este estudiante
+        # Extraer fila del estudiante
         df_est = df_curso[df_curso[col_nombres] == estudiante_sel].copy()
 
-        # Detectar columnas de puntajes (todas las que contengan "simce" en el nombre)
-        cols_puntajes = [c for c in df_est.columns if "simce" in str(c).lower()]
+        # Detectar columnas de puntajes (todas las numéricas, excepto col de nombres)
+        cols_puntajes = [
+            c for c in df_est.columns
+            if c != col_nombres and pd.api.types.is_numeric_dtype(df_est[c])
+        ]
+
+        # También incluir columnas que contengan "simce" o "puntaje"
+        for c in df_est.columns:
+            if c != col_nombres and ("simce" in str(c).lower() or "puntaje" in str(c).lower()):
+                if c not in cols_puntajes:
+                    cols_puntajes.append(c)
 
         if not cols_puntajes:
             st.warning("No se encontraron columnas de puntajes en esta hoja.")
         else:
+            # Ordenar columnas por nombre (para simular cronología)
+            cols_puntajes = sorted(cols_puntajes)
+
             puntajes = df_est[cols_puntajes].iloc[0].tolist()
 
-            # Crear gráfico
-            fig, ax = plt.subplots(figsize=(7, 4))
-            ax.plot(cols_puntajes, puntajes, marker="o", linestyle="-", color="blue")
+            # Filtrar solo valores válidos
+            x = [c for c, p in zip(cols_puntajes, puntajes) if pd.notna(p)]
+            y = [p for p in puntajes if pd.notna(p)]
 
-            # Anotar valores en cada punto
-            for i, p in enumerate(puntajes):
-                ax.text(i, p + 5, str(int(p)) if pd.notna(p) else "", ha="center", fontsize=9)
-
-            ax.set_title(f"Evolución del rendimiento - {estudiante_sel} ({curso_sel})")
-            ax.set_ylabel("Puntaje")
-            ax.set_xlabel("Ensayos")
-            ax.grid(True)
-
-            st.pyplot(fig)
-
-            # Mostrar promedio
-            puntajes_validos = [p for p in puntajes if pd.notna(p)]
-            if puntajes_validos:
-                promedio = sum(puntajes_validos) / len(puntajes_validos)
-                st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
-            else:
+            if not y:
                 st.info(f"No hay puntajes disponibles para {estudiante_sel}.")
+            else:
+                # Crear gráfico
+                fig, ax = plt.subplots(figsize=(7, 4))
+                ax.plot(x, y, marker="o", linestyle="-", color="blue")
 
+                # Anotar valores en cada punto
+                for i, (xi, yi) in enumerate(zip(x, y)):
+                    ax.text(i, yi + 5, str(int(yi)), ha="center", fontsize=9)
 
+                ax.set_title(f"Evolución del rendimiento - {estudiante_sel} ({curso_sel})")
+                ax.set_ylabel("Puntaje")
+                ax.set_xlabel("Ensayos")
+                ax.grid(True)
 
+                st.pyplot(fig)
+
+                # Promedio
+                promedio = sum(y) / len(y)
+                st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
 
 
