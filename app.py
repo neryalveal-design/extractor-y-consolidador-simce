@@ -3,25 +3,31 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE")
+st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE (Mejorado)")
 
 def extraer_datos(df):
     try:
+        # Usar fila 10 como encabezado
         df.columns = df.iloc[9]
-        df = df[10:]  # Datos reales a partir de fila 11
-        df = df.reset_index(drop=True)
+        df = df[10:].reset_index(drop=True)
+
+        # Normalizar nombres de columnas (eliminar espacios dobles, minúsculas)
+        columnas = df.columns.map(str)
+        columnas = columnas.str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+
+        df.columns = columnas  # Asignar columnas normalizadas
 
         # Detectar columna de nombres
         col_nombres = None
         for col in df.columns:
-            if isinstance(col, str) and 'nombre estudiante' in col.lower():
+            if "nombre estudiante" in col:
                 col_nombres = col
                 break
 
         # Detectar columna de puntajes
         col_puntaje = None
         for col in df.columns:
-            if isinstance(col, str) and 'simce' in col.lower():
+            if "puntaje simce" in col:
                 col_puntaje = col
                 break
 
@@ -29,13 +35,18 @@ def extraer_datos(df):
             st.error("No se pudieron detectar columnas de nombres o puntajes.")
             return None
 
+        # Asegurar que las columnas sean Series y no DataFrames con duplicados
+        if isinstance(df[col_nombres], pd.DataFrame) or isinstance(df[col_puntaje], pd.DataFrame):
+            st.error("Encabezados duplicados detectados. Ajusta el archivo.")
+            return None
+
         nombres = df[col_nombres].dropna().astype(str).tolist()
         puntajes = df[col_puntaje].dropna().astype(str).tolist()
 
-        # Crear DataFrame limpio
-        df_limpio = pd.DataFrame()
-        df_limpio["NOMBRE ESTUDIANTE"] = nombres
-        df_limpio["SIMCE 1"] = puntajes[:len(nombres)]  # En caso de diferencia de tamaño
+        df_limpio = pd.DataFrame({
+            "NOMBRE ESTUDIANTE": nombres,
+            "SIMCE 1": puntajes[:len(nombres)]
+        })
 
         return df_limpio
 
