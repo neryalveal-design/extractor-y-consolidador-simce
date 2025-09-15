@@ -327,6 +327,74 @@ if _file_consolidado and uploaded_file:
                 df_no_match = df_cons2[~df_cons2["__key"].isin(df_nuevos["__key"])]
                 st.write(f"**{hoja}** — Sin coincidencia: {len(df_no_match)}")
                 st.dataframe(df_no_match[[col_nombres]])
+# ================================
+# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE
+# ================================
+import matplotlib.pyplot as plt
+
+st.header("🎯 Análisis por estudiante")
+
+uploaded_consolidado_est = st.file_uploader(
+    "Sube el archivo consolidado actualizado (con todas las hojas y puntajes)",
+    type=["xlsx"],
+    key="consolidado_estudiantes"
+)
+
+if uploaded_consolidado_est:
+    xls_est = pd.ExcelFile(uploaded_consolidado_est)
+    hojas_est = xls_est.sheet_names
+
+    # Selección de curso (hoja)
+    curso_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_est)
+
+    df_curso = pd.read_excel(xls_est, sheet_name=curso_sel)
+
+    # Detectar columna de nombres
+    col_nombres = None
+    for col in df_curso.columns:
+        if "nombre" in str(col).lower() and "estudiante" in str(col).lower():
+            col_nombres = col
+            break
+
+    if col_nombres is None:
+        st.error("No se encontró una columna de nombres de estudiantes en esta hoja.")
+    else:
+        # Selección de estudiante
+        estudiante_sel = st.selectbox("Elige un estudiante", df_curso[col_nombres].dropna().unique())
+
+        # Extraer fila de este estudiante
+        df_est = df_curso[df_curso[col_nombres] == estudiante_sel].copy()
+
+        # Detectar columnas de puntajes (todas las que contengan "simce" en el nombre)
+        cols_puntajes = [c for c in df_est.columns if "simce" in str(c).lower()]
+
+        if not cols_puntajes:
+            st.warning("No se encontraron columnas de puntajes en esta hoja.")
+        else:
+            puntajes = df_est[cols_puntajes].iloc[0].tolist()
+
+            # Crear gráfico
+            fig, ax = plt.subplots(figsize=(7, 4))
+            ax.plot(cols_puntajes, puntajes, marker="o", linestyle="-", color="blue")
+
+            # Anotar valores en cada punto
+            for i, p in enumerate(puntajes):
+                ax.text(i, p + 5, str(int(p)) if pd.notna(p) else "", ha="center", fontsize=9)
+
+            ax.set_title(f"Evolución del rendimiento - {estudiante_sel} ({curso_sel})")
+            ax.set_ylabel("Puntaje")
+            ax.set_xlabel("Ensayos")
+            ax.grid(True)
+
+            st.pyplot(fig)
+
+            # Mostrar promedio
+            puntajes_validos = [p for p in puntajes if pd.notna(p)]
+            if puntajes_validos:
+                promedio = sum(puntajes_validos) / len(puntajes_validos)
+                st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
+            else:
+                st.info(f"No hay puntajes disponibles para {estudiante_sel}.")
 
 
 
