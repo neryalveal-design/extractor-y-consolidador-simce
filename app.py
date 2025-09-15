@@ -98,7 +98,7 @@ if uploaded_file:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# 📊 Función 2: Análisis por curso (usando archivo ya cargado)
+# 📊 Función 2: Análisis por curso (usando archivo ya cargado y función extraer_datos)
 st.header("📈 Análisis por curso")
 
 criterio = st.radio("Selecciona el criterio de análisis", ["SIMCE", "PAES"], key="criterio_analisis")
@@ -125,10 +125,11 @@ if uploaded_file:
     total_estudiantes = 0
 
     for hoja in hojas_analisis:
-        df = pd.read_excel(xls_analisis, sheet_name=hoja)
+        df_raw = pd.read_excel(xls_analisis, sheet_name=hoja, header=None)
+        df = extraer_datos(df_raw)  # 👈 reutilizamos la función de limpieza
 
-        if "SIMCE 1" not in df.columns:
-            st.warning(f"La hoja '{hoja}' no contiene columna 'SIMCE 1'. Se omitirá.")
+        if df is None or "SIMCE 1" not in df.columns:
+            st.warning(f"La hoja '{hoja}' no pudo procesarse. Se omitirá.")
             continue
 
         puntajes = pd.to_numeric(df["SIMCE 1"], errors='coerce').dropna()
@@ -148,8 +149,7 @@ if uploaded_file:
         total_estudiantes += suma_curso
 
         # Gráfico circular por curso
-        fig, ax = plt.subplots(subplot_kw=dict(projection='3d'))
-
+        fig, ax = plt.subplots()
         valores = list(categorias.values())
         etiquetas = list(categorias.keys())
         colores = ["red", "yellow", "green"]
@@ -169,8 +169,7 @@ if uploaded_file:
 
     # Gráfico global
     if total_estudiantes > 0:
-        fig_total, ax_total = plt.subplots(subplot_kw=dict(projection='3d'))
-
+        fig_total, ax_total = plt.subplots()
         valores = list(total_categorias.values())
         etiquetas = list(total_categorias.keys())
         colores = ["red", "yellow", "green"]
@@ -187,4 +186,5 @@ if uploaded_file:
         )
         ax_total.set_title("Distribución total de desempeño")
         st.pyplot(fig_total)
+
 
