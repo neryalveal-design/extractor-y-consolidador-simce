@@ -3,45 +3,33 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE (Mejorado)")
+st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE (Tolerante a Duplicados)")
 
 def extraer_datos(df):
     try:
         # Usar fila 10 como encabezado
-        df.columns = df.iloc[9]
+        raw_columns = df.iloc[9]
         df = df[10:].reset_index(drop=True)
 
-        # Normalizar nombres de columnas (eliminar espacios dobles, minúsculas)
-        columnas = df.columns.map(str)
-        columnas = columnas.str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+        # Normalizar encabezados
+        normalized = raw_columns.astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
 
-        df.columns = columnas  # Asignar columnas normalizadas
+        # Detectar la primera coincidencia válida por índice
+        idx_nombre = None
+        idx_puntaje = None
+        for i, col in enumerate(normalized):
+            if "nombre estudiante" in col and idx_nombre is None:
+                idx_nombre = i
+            if "puntaje simce" in col and idx_puntaje is None:
+                idx_puntaje = i
 
-        # Detectar columna de nombres
-        col_nombres = None
-        for col in df.columns:
-            if "nombre estudiante" in col:
-                col_nombres = col
-                break
-
-        # Detectar columna de puntajes
-        col_puntaje = None
-        for col in df.columns:
-            if "puntaje simce" in col:
-                col_puntaje = col
-                break
-
-        if not col_nombres or not col_puntaje:
-            st.error("No se pudieron detectar columnas de nombres o puntajes.")
+        if idx_nombre is None or idx_puntaje is None:
+            st.error("No se detectaron columnas válidas de nombres o puntajes.")
             return None
 
-        # Asegurar que las columnas sean Series y no DataFrames con duplicados
-        if isinstance(df[col_nombres], pd.DataFrame) or isinstance(df[col_puntaje], pd.DataFrame):
-            st.error("Encabezados duplicados detectados. Ajusta el archivo.")
-            return None
-
-        nombres = df[col_nombres].dropna().astype(str).tolist()
-        puntajes = df[col_puntaje].dropna().astype(str).tolist()
+        # Extraer columnas por índice
+        nombres = df.iloc[:, idx_nombre].dropna().astype(str).tolist()
+        puntajes = df.iloc[:, idx_puntaje].dropna().astype(str).tolist()
 
         df_limpio = pd.DataFrame({
             "NOMBRE ESTUDIANTE": nombres,
