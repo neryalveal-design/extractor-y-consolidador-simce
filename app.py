@@ -8,7 +8,7 @@ from io import BytesIO
 col1, col2 = st.columns([1, 4])  # 1 parte para el logo, 4 para el texto
 
 with col1:
-    st.image("logo.png", width=80)  # reemplaza "logo.png" por la ruta real de tu logo (puede ser local o un link)
+    st.image("logo.png", width=80)  
 
 with col2:
     st.markdown(
