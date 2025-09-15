@@ -3,83 +3,74 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-# Función de limpieza con fix
-def limpiar_dataframe(df):
-    # Asegura que los nombres de columna sean strings
-    df.columns = df.columns.map(str)
+st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE")
 
-    # Eliminar columnas sin nombre
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed', na=False)]
+def extraer_datos(df):
+    try:
+        df.columns = df.iloc[9]
+        df = df[10:]  # Datos reales a partir de fila 11
+        df = df.reset_index(drop=True)
 
-    # Eliminar columnas duplicadas
-    df = df.loc[:, ~df.columns.duplicated()]
+        # Detectar columna de nombres
+        col_nombres = None
+        for col in df.columns:
+            if isinstance(col, str) and 'nombre estudiante' in col.lower():
+                col_nombres = col
+                break
 
-    # Limpiar espacios y pasar todo a minúscula
-    df.columns = [col.strip().lower() for col in df.columns]
+        # Detectar columna de puntajes
+        col_puntaje = None
+        for col in df.columns:
+            if isinstance(col, str) and 'simce' in col.lower():
+                col_puntaje = col
+                break
 
-    # Filtrar solo columnas útiles
-    columnas_validas = [col for col in df.columns if "nombre" in col or "puntaje" in col or "curso" in col]
-    df = df[columnas_validas]
+        if not col_nombres or not col_puntaje:
+            st.error("No se pudieron detectar columnas de nombres o puntajes.")
+            return None
 
-    return df
+        nombres = df[col_nombres].dropna().astype(str).tolist()
+        puntajes = df[col_puntaje].dropna().astype(str).tolist()
 
-# Validación
-def validar_columnas(df, columnas_requeridas):
-    return all(col in df.columns for col in columnas_requeridas)
+        # Crear DataFrame limpio
+        df_limpio = pd.DataFrame()
+        df_limpio["NOMBRE ESTUDIANTE"] = nombres
+        df_limpio["SIMCE 1"] = puntajes[:len(nombres)]  # En caso de diferencia de tamaño
 
-# Consolidación por curso
-def consolidar_por_curso(df):
-    return df.groupby("curso").agg({
-        "nombre": "count",
-        "puntaje": "mean"
-    }).reset_index()
+        return df_limpio
 
-# Interfaz principal
-st.title("Extractor de Puntajes SIMCE y Ensayos")
+    except Exception as e:
+        st.error(f"Error procesando el archivo: {e}")
+        return None
 
-uploaded_files = st.file_uploader("Sube uno o varios archivos Excel", type=["xlsx"], accept_multiple_files=True)
+uploaded_file = st.file_uploader("Sube un archivo Excel", type=["xlsx"])
 
-if uploaded_files:
-    dataframes = []
-    for file in uploaded_files:
-        df = pd.read_excel(file)
-        df = limpiar_dataframe(df)
+if uploaded_file:
+    xls = pd.ExcelFile(uploaded_file)
+    hojas_validas = xls.sheet_names
 
-        columnas_requeridas = ['nombre', 'puntaje']
-        if not validar_columnas(df, columnas_requeridas):
-            st.error(f"Archivo '{file.name}' no contiene columnas requeridas: {columnas_requeridas}")
-            continue
+    st.write("Hojas detectadas:", hojas_validas)
 
-        dataframes.append(df)
+    for hoja in hojas_validas:
+        st.subheader(f"Procesando hoja: {hoja}")
+        df = pd.read_excel(xls, sheet_name=hoja, header=None)
 
-    if dataframes:
-        df_total = pd.concat(dataframes, ignore_index=True)
+        df_extraido = extraer_datos(df)
 
-        st.subheader("Vista previa del archivo limpio")
-        st.dataframe(df_total.head())
+        if df_extraido is not None:
+            st.write("Vista previa de datos extraídos:")
+            st.dataframe(df_extraido)
 
-        st.subheader("Consolidado por curso")
-        df_consolidado = consolidar_por_curso(df_total)
-        st.dataframe(df_consolidado)
-
-        # Descarga del Excel limpio
-        output = BytesIO()
-        df_total.to_excel(output, index=False, engine='xlsxwriter')
-        st.download_button(
-            label="📥 Descargar Excel limpio",
-            data=output.getvalue(),
-            file_name="archivo_limpio.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        # Descarga del consolidado
-        output2 = BytesIO()
-        df_consolidado.to_excel(output2, index=False, engine='xlsxwriter')
-        st.download_button(
-            label="📥 Descargar Consolidado por Curso",
-            data=output2.getvalue(),
-            file_name="consolidado_cursos.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-    else:
-        st.warning("Ningún archivo válido fue procesado.")
+            # Generar archivo descargable
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_extraido.to_excel(writer, index=False, sheet_name='Resultados')
+                worksheet = writer.sheets['Resultados']
+                worksheet.write('A1', 'NOMBRE ESTUDIANTE')
+                worksheet.write('B1', 'SIMCE 1')
+            st.download_button(
+                label=f"📥 Descargar resultados hoja {hoja}",
+                data=output.getvalue(),
+                file_name=f"resultados_{hoja}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
