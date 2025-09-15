@@ -414,3 +414,67 @@ if uploaded_consolidado_est:
                 promedio = sum(y) / len(y)
                 st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
 
+# ================================
+# 📉 FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO
+# ================================
+st.header("📉 Estudiantes con rendimiento más bajo")
+
+uploaded_bajos = st.file_uploader(
+    "Sube el archivo consolidado actualizado (con todas las hojas y puntajes)",
+    type=["xlsx"],
+    key="consolidado_bajos"
+)
+
+if uploaded_bajos:
+    xls_bajos = pd.ExcelFile(uploaded_bajos)
+    hojas_bajos = xls_bajos.sheet_names
+
+    curso_sel_bajos = st.selectbox("Elige el curso (hoja de Excel)", hojas_bajos, key="curso_bajos")
+    df_bajos = pd.read_excel(xls_bajos, sheet_name=curso_sel_bajos)
+
+    # Detectar columna de nombres
+    col_nombres = None
+    for col in df_bajos.columns:
+        if "nombre" in str(col).lower() and "estudiante" in str(col).lower():
+            col_nombres = col
+            break
+
+    if col_nombres is None:
+        st.error("No se encontró una columna de nombres de estudiantes en esta hoja.")
+    else:
+        # Detectar columnas de puntajes (numéricas o que contengan 'simce' o 'puntaje')
+        cols_puntajes = [
+            c for c in df_bajos.columns
+            if c != col_nombres and pd.api.types.is_numeric_dtype(df_bajos[c])
+        ]
+        for c in df_bajos.columns:
+            if c != col_nombres and ("simce" in str(c).lower() or "puntaje" in str(c).lower()):
+                if c not in cols_puntajes:
+                    cols_puntajes.append(c)
+
+        if not cols_puntajes:
+            st.warning("No se encontraron columnas de puntajes en esta hoja.")
+        else:
+            # Tomar la última columna como el ensayo más reciente
+            ultima_col = sorted(cols_puntajes)[-1]
+            st.write(f"📌 Considerando el ensayo más reciente: **{ultima_col}**")
+
+            # Ordenar por puntaje ascendente
+            df_top10 = df_bajos[[col_nombres, ultima_col]].copy()
+            df_top10 = df_top10.dropna(subset=[ultima_col])  # eliminar filas sin puntaje
+            df_top10 = df_top10.sort_values(by=ultima_col, ascending=True).head(10)
+
+            st.subheader(f"🔟 Estudiantes con menor puntaje en {curso_sel_bajos}")
+            st.dataframe(df_top10)
+
+            # Descargar en Excel
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                df_top10.to_excel(writer, sheet_name="Bajos", index=False)
+            st.download_button(
+                label="⬇️ Descargar ranking en Excel",
+                data=output.getvalue(),
+                file_name=f"bajos_{curso_sel_bajos}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
