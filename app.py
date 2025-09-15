@@ -98,3 +98,93 @@ if uploaded_file:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+# 📊 Función 2: Análisis por curso (usando archivo ya cargado)
+st.header("📈 Análisis por curso")
+
+criterio = st.radio("Selecciona el criterio de análisis", ["SIMCE", "PAES"], key="criterio_analisis")
+
+# Rango de criterios
+if criterio == "SIMCE":
+    rangos = {
+        "Insuficiente": (0, 250),
+        "Intermedio": (251, 285),
+        "Adecuado": (286, 400)
+    }
+else:  # PAES
+    rangos = {
+        "Insuficiente": (0, 599),
+        "Intermedio": (600, 799),
+        "Adecuado": (800, 1000)
+    }
+
+if uploaded_file:
+    xls_analisis = pd.ExcelFile(uploaded_file)
+    hojas_analisis = xls_analisis.sheet_names
+
+    total_categorias = {"Insuficiente": 0, "Intermedio": 0, "Adecuado": 0}
+    total_estudiantes = 0
+
+    for hoja in hojas_analisis:
+        df = pd.read_excel(xls_analisis, sheet_name=hoja)
+
+        if "SIMCE 1" not in df.columns:
+            st.warning(f"La hoja '{hoja}' no contiene columna 'SIMCE 1'. Se omitirá.")
+            continue
+
+        puntajes = pd.to_numeric(df["SIMCE 1"], errors='coerce').dropna()
+
+        categorias = {
+            "Insuficiente": ((puntajes >= rangos["Insuficiente"][0]) & (puntajes <= rangos["Insuficiente"][1])).sum(),
+            "Intermedio": ((puntajes >= rangos["Intermedio"][0]) & (puntajes <= rangos["Intermedio"][1])).sum(),
+            "Adecuado": ((puntajes >= rangos["Adecuado"][0]) & (puntajes <= rangos["Adecuado"][1])).sum(),
+        }
+
+        suma_curso = sum(categorias.values())
+        if suma_curso == 0:
+            continue
+
+        for k in categorias:
+            total_categorias[k] += categorias[k]
+        total_estudiantes += suma_curso
+
+        # Gráfico circular por curso
+        fig, ax = plt.subplots(subplot_kw=dict(projection='3d'))
+
+        valores = list(categorias.values())
+        etiquetas = list(categorias.keys())
+        colores = ["red", "yellow", "green"]
+        explode = [0.1 if v == max(valores) else 0 for v in valores]
+
+        ax.pie(
+            valores,
+            labels=[f"{etiquetas[i]} ({valores[i]})" for i in range(len(etiquetas))],
+            colors=colores,
+            explode=explode,
+            autopct="%1.1f%%",
+            shadow=True,
+            startangle=90
+        )
+        ax.set_title(f"Distribución por desempeño - {hoja}")
+        st.pyplot(fig)
+
+    # Gráfico global
+    if total_estudiantes > 0:
+        fig_total, ax_total = plt.subplots(subplot_kw=dict(projection='3d'))
+
+        valores = list(total_categorias.values())
+        etiquetas = list(total_categorias.keys())
+        colores = ["red", "yellow", "green"]
+        explode = [0.1 if v == max(valores) else 0 for v in valores]
+
+        ax_total.pie(
+            valores,
+            labels=[f"{etiquetas[i]} ({valores[i]})" for i in range(len(etiquetas))],
+            colors=colores,
+            explode=explode,
+            autopct="%1.1f%%",
+            shadow=True,
+            startangle=90
+        )
+        ax_total.set_title("Distribución total de desempeño")
+        st.pyplot(fig_total)
+
