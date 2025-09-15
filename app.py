@@ -350,24 +350,18 @@ if _file_consolidado and uploaded_file:
                 st.dataframe(df_no_match[[col_nombres]])
 
 # ================================
-# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (ajustada)
+# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (ajustada para reutilizar consolidado)
 # ================================
 import matplotlib.pyplot as plt
 
 st.header("🎯 Análisis por estudiante")
 
-uploaded_consolidado_est = st.file_uploader(
-    "Sube el archivo consolidado actualizado (con todas las hojas y puntajes)",
-    type=["xlsx"],
-    key="consolidado_estudiantes"
-)
-
-if uploaded_consolidado_est:
-    xls_est = pd.ExcelFile(uploaded_consolidado_est)
+if 'xls_consolidado' in st.session_state:
+    xls_est = st.session_state['xls_consolidado']
     hojas_est = xls_est.sheet_names
 
     # Selección de curso (hoja)
-    curso_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_est)
+    curso_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_est, key="curso_est")
 
     df_curso = pd.read_excel(xls_est, sheet_name=curso_sel)
 
@@ -382,7 +376,7 @@ if uploaded_consolidado_est:
         st.error("No se encontró una columna de nombres de estudiantes en esta hoja.")
     else:
         # Selección de estudiante
-        estudiante_sel = st.selectbox("Elige un estudiante", df_curso[col_nombres].dropna().unique())
+        estudiante_sel = st.selectbox("Elige un estudiante", df_curso[col_nombres].dropna().unique(), key="estudiante_sel")
 
         # Extraer fila del estudiante
         df_est = df_curso[df_curso[col_nombres] == estudiante_sel].copy()
@@ -434,6 +428,9 @@ if uploaded_consolidado_est:
                 # Promedio
                 promedio = sum(y) / len(y)
                 st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
+else:
+    st.warning("⚠️ Primero debes ejecutar la función 3 (Consolidación de puntajes) para cargar el archivo consolidado.")
+
 
 # ================================
 # 📉 FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO (reutilizando el archivo de Función 4)
