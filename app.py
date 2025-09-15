@@ -329,7 +329,7 @@ if _file_consolidado and uploaded_file:
                 st.dataframe(df_no_match[[col_nombres]])
 
 # ================================
-# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (mejorada)
+# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (ajustada)
 # ================================
 import matplotlib.pyplot as plt
 
@@ -366,13 +366,11 @@ if uploaded_consolidado_est:
         # Extraer fila del estudiante
         df_est = df_curso[df_curso[col_nombres] == estudiante_sel].copy()
 
-        # Detectar columnas de puntajes (todas las numéricas, excepto col de nombres)
+        # Detectar columnas de puntajes (numéricas o que contengan 'simce' o 'puntaje')
         cols_puntajes = [
             c for c in df_est.columns
             if c != col_nombres and pd.api.types.is_numeric_dtype(df_est[c])
         ]
-
-        # También incluir columnas que contengan "simce" o "puntaje"
         for c in df_est.columns:
             if c != col_nombres and ("simce" in str(c).lower() or "puntaje" in str(c).lower()):
                 if c not in cols_puntajes:
@@ -406,10 +404,13 @@ if uploaded_consolidado_est:
                 ax.set_xlabel("Ensayos")
                 ax.grid(True)
 
+                # 🔧 Ajustar etiquetas del eje X
+                ax.set_xticks(range(len(x)))
+                ax.set_xticklabels(x, fontsize=8, rotation=30)
+
                 st.pyplot(fig)
 
                 # Promedio
                 promedio = sum(y) / len(y)
                 st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
-
 
