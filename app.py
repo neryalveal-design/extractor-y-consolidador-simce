@@ -1,5 +1,18 @@
 
 import streamlit as st
+# Encabezado con logo y título
+col1, col2 = st.columns([1, 4])  # ancho: logo más pequeño, texto más grande
+
+with col1:
+    st.image("logo.png", width=80)  # cambia "logo.png" por la ruta de tu logo
+
+with col2:
+    st.markdown(
+        "<h2 style='margin-bottom:0;'>Departamento de Lenguaje</h2>"
+        "<h4 style='margin-top:0;'>Liceo Polivalente San Nicolás</h4>",
+        unsafe_allow_html=True
+    )
+
 import pandas as pd
 from io import BytesIO
 
