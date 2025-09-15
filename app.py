@@ -545,3 +545,68 @@ if uploaded_file:  # usamos el archivo ya cargado en la función 1
 else:
     st.info("⚠️ Primero debes subir un archivo en la sección 'EXTRAER PUNTAJES'.")
 
+# ================================
+# 📝 AJUSTE FUNCIÓN 6: Alta dispersión solo con bajo % de acierto
+# ================================
+if uploaded_file:
+    xls_preg = pd.ExcelFile(uploaded_file)
+    hojas_preg = xls_preg.sheet_names
+
+    hoja_sel2 = st.selectbox("Elige nuevamente el curso para aplicar el ajuste (Función 6 corregida)", hojas_preg, key="hoja_preg_v2")
+    df_preg = pd.read_excel(xls_preg, sheet_name=hoja_sel2, header=None)
+
+    claves = df_preg.iloc[8, 3:68].tolist()
+    preguntas = df_preg.iloc[9, 3:68].tolist()
+    valid_idx = [i for i, c in enumerate(claves) if pd.notna(c) and str(c).strip() != ""]
+    claves = [claves[i] for i in valid_idx]
+    preguntas = [preguntas[i] for i in valid_idx]
+    respuestas = df_preg.iloc[10:56, 3:68]
+
+    resumen = []
+    for j, clave in zip(valid_idx, claves):
+        col = respuestas.iloc[:, j]
+        total = col.notna().sum()
+        aciertos = (col.astype(str).str.lower() == str(clave).lower()).sum()
+        pct = aciertos / total * 100 if total > 0 else 0
+
+        conteos = df_preg.iloc[59:64, j+3]
+        alternativas = ["A", "B", "C", "D", "E"]
+        dist = dict(zip(alternativas, conteos))
+
+        if dist["D"] == dist["E"]:
+            dist.pop("E")
+
+        obs = ""
+        total_resps = sum(dist.values())
+        if total_resps > 0:
+            dist_pct = {k: v/total_resps*100 for k, v in dist.items()}
+            dist_incorrectas = {k: v for k, v in dist_pct.items() if k.lower() != str(clave).lower()}
+
+            if dist_incorrectas:
+                max_alt = max(dist_incorrectas, key=dist_incorrectas.get)
+                if dist_incorrectas[max_alt] > 50:
+                    obs = f"Distractor fuerte: {max_alt}"
+
+                # 🔧 Alta dispersión solo si % acierto < 50
+                vals = list(dist_incorrectas.values())
+                if pct < 50 and max(vals) - min(vals) < 10 and len(vals) > 1:
+                    obs = "Alta dispersión"
+
+        resumen.append({
+            "Pregunta": preguntas[valid_idx.index(j)],
+            "Correcta": clave,
+            "% Aciertos": round(pct, 2),
+            "Observación": obs
+        })
+
+    df_resumen = pd.DataFrame(resumen)
+    st.subheader("📊 Resumen de preguntas críticas (ajustado)")
+    st.dataframe(df_resumen)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(df_resumen["Pregunta"], df_resumen["% Aciertos"], color="skyblue")
+    ax.set_title(f"% de aciertos por pregunta - {hoja_sel2}")
+    ax.set_xlabel("Pregunta")
+    ax.set_ylabel("% Aciertos")
+    plt.xticks(rotation=45)
+    st.pyplot(fig)
