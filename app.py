@@ -5,18 +5,24 @@ from io import BytesIO
 # ================================
 # Encabezado con logo y título centrado
 # ================================
-st.markdown(
-    """
-    <div style="display: flex; align-items: center; justify-content: center;">
-        <img src="/logo.png" width="80" style="margin-right:20px;">
+col1, col2, col3 = st.columns([1,3,1])
+
+with col1:
+    st.image("logo.png", width=100)  # Logo local
+
+with col2:
+    st.markdown(
+        """
         <div style="text-align: center;">
             <h2 style="margin-bottom:0;">Departamento de Lenguaje</h2>
             <h4 style="margin-top:0;">Liceo Polivalente San Nicolás</h4>
         </div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+        """,
+        unsafe_allow_html=True
+    )
+
+with col3:
+    st.write("")  # espacio vacío para balancear
 
 st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE")
 
