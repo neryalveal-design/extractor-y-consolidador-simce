@@ -189,5 +189,3 @@ if uploaded_file:
         ax_total.set_title("Distribución total de desempeño")
         st.pyplot(fig_total)
 
-
-
