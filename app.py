@@ -3,12 +3,6 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-    st.markdown(
-        "<h2 style='margin-bottom:0;'>Departamento de Lenguaje</h2>"
-        "<h4 style='margin-top:0;'>Liceo Polivalente San Nicolás</h4>",
-        unsafe_allow_html=True
-    )
-
 st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE")
 
 def extraer_datos(df):
