@@ -464,18 +464,12 @@ else:
     st.info("⚠️ Primero sube un archivo en la sección 'Análisis por estudiante'.")
 
 # ================================
-# 📝 FUNCIÓN 6: ANÁLISIS DE PREGUNTAS Y DISTRACTORES
+# 📝 FUNCIÓN 6: ANÁLISIS DE PREGUNTAS Y DISTRACTORES (reutilizando archivo de Función 1)
 # ================================
 st.header("📝 Análisis de preguntas y distractores")
 
-uploaded_preguntas = st.file_uploader(
-    "Sube el archivo complejo de la prueba (con respuestas y claves)",
-    type=["xlsx"],
-    key="archivo_preguntas"
-)
-
-if uploaded_preguntas:
-    xls_preg = pd.ExcelFile(uploaded_preguntas)
+if uploaded_file:  # usamos el archivo ya cargado en la función 1
+    xls_preg = pd.ExcelFile(uploaded_file)
     hojas_preg = xls_preg.sheet_names
 
     hoja_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_preg, key="hoja_preg")
@@ -483,8 +477,8 @@ if uploaded_preguntas:
     df_preg = pd.read_excel(xls_preg, sheet_name=hoja_sel, header=None)
 
     # Extraer claves correctas y números de preguntas
-    claves = df_preg.iloc[8, 3:68].tolist()   # fila 9 → índice 8, columnas D=3 a BP
-    preguntas = df_preg.iloc[9, 3:68].tolist()  # fila 10 → índice 9
+    claves = df_preg.iloc[8, 3:68].tolist()      # fila 9 → índice 8, columnas D=3 a BP
+    preguntas = df_preg.iloc[9, 3:68].tolist()   # fila 10 → índice 9
 
     # Filtrar solo preguntas con clave no vacía
     valid_idx = [i for i, c in enumerate(claves) if pd.notna(c) and str(c).strip() != ""]
@@ -503,7 +497,7 @@ if uploaded_preguntas:
         pct = aciertos / total * 100 if total > 0 else 0
 
         # Extraer conteos de alternativas (filas 60-64 → índices 59:64)
-        conteos = df_preg.iloc[59:64, j+2]  # columna j desplazada porque empieza en D=3
+        conteos = df_preg.iloc[59:64, j+3]  # +3 porque D=3
         alternativas = ["A", "B", "C", "D", "E"]
         dist = dict(zip(alternativas, conteos))
 
@@ -516,7 +510,7 @@ if uploaded_preguntas:
         total_resps = sum(dist.values())
         if total_resps > 0:
             dist_pct = {k: v/total_resps*100 for k, v in dist.items()}
-            # Quitar la alternativa correcta del análisis de distractores
+            # Quitar la alternativa correcta
             dist_incorrectas = {k: v for k, v in dist_pct.items() if k.lower() != str(clave).lower()}
 
             if dist_incorrectas:
@@ -548,4 +542,6 @@ if uploaded_preguntas:
     ax.set_ylabel("% Aciertos")
     plt.xticks(rotation=45)
     st.pyplot(fig)
+else:
+    st.info("⚠️ Primero debes subir un archivo en la sección 'EXTRAER PUNTAJES'.")
 
