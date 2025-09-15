@@ -75,3 +75,26 @@ if uploaded_file:
                 file_name=f"resultados_{hoja}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            
+    # 🔄 Crear archivo combinado con todas las hojas de curso
+    st.subheader("📦 Exportar todas las hojas a un único Excel normalizado")
+
+    combined_output = BytesIO()
+    with pd.ExcelWriter(combined_output, engine='xlsxwriter') as writer:
+        for hoja in hojas_validas:
+            df = pd.read_excel(xls, sheet_name=hoja, header=None)
+            df_extraido = extraer_datos(df)
+
+            if df_extraido is not None:
+                df_extraido.to_excel(writer, index=False, sheet_name=hoja[:31])  # Máximo 31 caracteres para nombre hoja
+                worksheet = writer.sheets[hoja[:31]]
+                worksheet.write('A1', 'NOMBRE ESTUDIANTE')
+                worksheet.write('B1', 'SIMCE 1')
+
+    st.download_button(
+        label="📥 Descargar Excel Normalizado con todas las hojas",
+        data=combined_output.getvalue(),
+        file_name="excel_normalizado.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
