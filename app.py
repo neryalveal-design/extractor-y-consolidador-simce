@@ -8,7 +8,7 @@ from io import BytesIO
 st.markdown(
     """
     <div style="display: flex; align-items: center; justify-content: center;">
-        <img src="logo liceo.png" width="80" style="margin-right:20px;">
+        <img src="logo.png" width="80" style="margin-right:20px;">
         <div style="text-align: center;">
             <h2 style="margin-bottom:0;">Departamento de Lenguaje</h2>
             <h4 style="margin-top:0;">Liceo Polivalente San Nicolás</h4>
