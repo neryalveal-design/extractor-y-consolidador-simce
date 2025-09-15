@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE (Tolerante a Duplicados)")
+st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE (Longitudes sincronizadas)")
 
 def extraer_datos(df):
     try:
@@ -13,27 +13,29 @@ def extraer_datos(df):
 
         # Normalizar encabezados
         normalized = raw_columns.astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+        df.columns = normalized
 
-        # Detectar la primera coincidencia válida por índice
-        idx_nombre = None
-        idx_puntaje = None
-        for i, col in enumerate(normalized):
-            if "nombre estudiante" in col and idx_nombre is None:
-                idx_nombre = i
-            if "puntaje simce" in col and idx_puntaje is None:
-                idx_puntaje = i
+        # Detectar índices
+        idx_nombre = next((i for i, col in enumerate(normalized) if "nombre estudiante" in col), None)
+        idx_puntaje = next((i for i, col in enumerate(normalized) if "puntaje simce" in col), None)
 
         if idx_nombre is None or idx_puntaje is None:
             st.error("No se detectaron columnas válidas de nombres o puntajes.")
             return None
 
-        # Extraer columnas por índice
+        # Extraer datos
         nombres = df.iloc[:, idx_nombre].dropna().astype(str).tolist()
         puntajes = df.iloc[:, idx_puntaje].dropna().astype(str).tolist()
 
+        # Sincronizar longitudes
+        min_len = min(len(nombres), len(puntajes))
+        nombres = nombres[:min_len]
+        puntajes = puntajes[:min_len]
+
+        # Crear DataFrame limpio
         df_limpio = pd.DataFrame({
             "NOMBRE ESTUDIANTE": nombres,
-            "SIMCE 1": puntajes[:len(nombres)]
+            "SIMCE 1": puntajes
         })
 
         return df_limpio
