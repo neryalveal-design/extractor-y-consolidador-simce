@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE (Longitudes sincronizadas)")
+st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE")
 
 def extraer_datos(df):
     try:
