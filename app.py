@@ -462,3 +462,90 @@ if 'xls_est' in locals() and uploaded_consolidado_est:
 
 else:
     st.info("⚠️ Primero sube un archivo en la sección 'Análisis por estudiante'.")
+
+# ================================
+# 📝 FUNCIÓN 6: ANÁLISIS DE PREGUNTAS Y DISTRACTORES
+# ================================
+st.header("📝 Análisis de preguntas y distractores")
+
+uploaded_preguntas = st.file_uploader(
+    "Sube el archivo complejo de la prueba (con respuestas y claves)",
+    type=["xlsx"],
+    key="archivo_preguntas"
+)
+
+if uploaded_preguntas:
+    xls_preg = pd.ExcelFile(uploaded_preguntas)
+    hojas_preg = xls_preg.sheet_names
+
+    hoja_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_preg, key="hoja_preg")
+
+    df_preg = pd.read_excel(xls_preg, sheet_name=hoja_sel, header=None)
+
+    # Extraer claves correctas y números de preguntas
+    claves = df_preg.iloc[8, 3:68].tolist()   # fila 9 → índice 8, columnas D=3 a BP
+    preguntas = df_preg.iloc[9, 3:68].tolist()  # fila 10 → índice 9
+
+    # Filtrar solo preguntas con clave no vacía
+    valid_idx = [i for i, c in enumerate(claves) if pd.notna(c) and str(c).strip() != ""]
+    claves = [claves[i] for i in valid_idx]
+    preguntas = [preguntas[i] for i in valid_idx]
+
+    # Respuestas de estudiantes (filas 11-56 → índices 10:56)
+    respuestas = df_preg.iloc[10:56, 3:68]
+
+    # Cálculo de % de aciertos por pregunta
+    resumen = []
+    for j, clave in zip(valid_idx, claves):
+        col = respuestas.iloc[:, j]
+        total = col.notna().sum()
+        aciertos = (col.astype(str).str.lower() == str(clave).lower()).sum()
+        pct = aciertos / total * 100 if total > 0 else 0
+
+        # Extraer conteos de alternativas (filas 60-64 → índices 59:64)
+        conteos = df_preg.iloc[59:64, j+2]  # columna j desplazada porque empieza en D=3
+        alternativas = ["A", "B", "C", "D", "E"]
+        dist = dict(zip(alternativas, conteos))
+
+        # Omitir alternativa E si es duplicada de D
+        if dist["D"] == dist["E"]:
+            dist.pop("E")
+
+        # Detectar distractores
+        obs = ""
+        total_resps = sum(dist.values())
+        if total_resps > 0:
+            dist_pct = {k: v/total_resps*100 for k, v in dist.items()}
+            # Quitar la alternativa correcta del análisis de distractores
+            dist_incorrectas = {k: v for k, v in dist_pct.items() if k.lower() != str(clave).lower()}
+
+            if dist_incorrectas:
+                max_alt = max(dist_incorrectas, key=dist_incorrectas.get)
+                if dist_incorrectas[max_alt] > 50:
+                    obs = f"Distractor fuerte: {max_alt}"
+
+                # Alta dispersión si las incorrectas son muy similares
+                vals = list(dist_incorrectas.values())
+                if max(vals) - min(vals) < 10 and len(vals) > 1:
+                    obs = "Alta dispersión"
+
+        resumen.append({
+            "Pregunta": preguntas[valid_idx.index(j)],
+            "Correcta": clave,
+            "% Aciertos": round(pct, 2),
+            "Observación": obs
+        })
+
+    df_resumen = pd.DataFrame(resumen)
+    st.subheader("📊 Resumen de preguntas críticas")
+    st.dataframe(df_resumen)
+
+    # Gráfico de % de aciertos
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.bar(df_resumen["Pregunta"], df_resumen["% Aciertos"], color="skyblue")
+    ax.set_title(f"% de aciertos por pregunta - {hoja_sel}")
+    ax.set_xlabel("Pregunta")
+    ax.set_ylabel("% Aciertos")
+    plt.xticks(rotation=45)
+    st.pyplot(fig)
+
