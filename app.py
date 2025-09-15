@@ -99,6 +99,8 @@ if uploaded_file:
     )
 
 # 📊 Función 2: Análisis por curso (usando archivo ya cargado y función extraer_datos)
+import matplotlib.pyplot as plt
+
 st.header("📈 Análisis por curso")
 
 criterio = st.radio("Selecciona el criterio de análisis", ["SIMCE", "PAES"], key="criterio_analisis")
@@ -186,5 +188,6 @@ if uploaded_file:
         )
         ax_total.set_title("Distribución total de desempeño")
         st.pyplot(fig_total)
+
 
 
