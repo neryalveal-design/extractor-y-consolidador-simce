@@ -21,7 +21,6 @@ st.set_page_config(page_title="Extractor y Consolidador SIMCE/PAES", layout="wid
 col1, col2, col3 = st.columns([1, 3, 1])
 with col1:
     try:
-        # Si existe un logo local (ajusta la ruta si lo pones en 'assets/logo.png')
         st.image("assets/logo.png", width=90)
     except Exception:
         pass
@@ -102,6 +101,21 @@ def _parse_numeric_series(series: pd.Series) -> pd.Series:
     s = s.apply(_fix)
     return pd.to_numeric(s, errors="coerce")
 
+def _detectar_col_puntaje(df: pd.DataFrame):
+    """Devuelve el nombre de la columna de puntaje en un normalizado/consolidado."""
+    preferidas = ["Puntaje Ensayo 1", "SIMCE 1"]
+    for c in preferidas:
+        if c in df.columns:
+            return c
+    for c in df.columns:
+        n = str(c).lower()
+        if any(k in n for k in ("puntaje", "simce", "ensayo")) and c != "NOMBRE ESTUDIANTE":
+            return c
+    for c in df.columns:
+        if c != "NOMBRE ESTUDIANTE" and pd.api.types.is_numeric_dtype(df[c]):
+            return c
+    return None
+
 # ===================================================
 # FUNCIÓN 1: EXTRAER PUNTAJES (archivo complejo -> normalizado por hoja)
 # ===================================================
@@ -111,62 +125,85 @@ def extraer_datos(
     df_raw,
     fila_encabezado: int = 9,   # 10 (humano) -> 9 (0-based)
     fila_ini: int = 10,         # 11 (humano) -> 10
-    fila_fin: int = 56,         # exclusivo; procesa hasta 56
-    fallback_nombre_col: int = 2 # C (0-based)
+    fila_fin: int = 80,         # exclusivo (por si hay más de 56 filas reales)
+    fallback_nombre_col: int = 2  # C (0-based)
 ):
     """
-    Extrae nombres y puntajes desde una hoja del archivo complejo tipo SIMCE.
-    Devuelve DataFrame con columnas ['NOMBRE ESTUDIANTE', 'SIMCE 1'] (float).
+    Extrae nombres y puntajes desde una hoja del archivo complejo tipo SIMCE/Ensayo.
+    Devuelve DataFrame con columnas ['NOMBRE ESTUDIANTE', 'Puntaje Ensayo 1'] (float).
     """
     headers = df_raw.iloc[fila_encabezado].astype(str).str.lower().fillna("")
+
     # Columna de nombres
     cand_name_cols = [i for i, v in enumerate(headers) if ("nombre" in v and "estudiante" in v)]
     col_name = cand_name_cols[0] if cand_name_cols else fallback_nombre_col
-    # Columna de puntajes
-    cand_score_cols = [i for i, v in enumerate(headers) if ("puntaje" in v and "simce" in v)]
+
+    # Columna de puntaje (por encabezado)
+    cand_score_cols = [i for i, v in enumerate(headers)
+                       if ("puntaje" in v and ("simce" in v or "ensayo" in v))]
     col_score = cand_score_cols[0] if cand_score_cols else None
 
     # Rango de estudiantes
     sub = df_raw.iloc[fila_ini:fila_fin].copy()
 
-    # Nombres y filtro de válidos
+    # Serie de nombres y filtro de válidos
     nombres = sub.iloc[:, col_name].astype(str).str.strip()
     invalid = {"", "nan", "nombre estudiante", "curso", "correctas", "a", "b", "c", "d", "e"}
     mask_valid = ~nombres.str.lower().isin(invalid)
     nombres = nombres[mask_valid]
 
-    # Puntajes (detectar si no hay encabezado claro)
-    if col_score is None:
-        best_col, best_hits = None, -1
-        for j in range(sub.shape[1]):
-            s = sub.iloc[:, j].astype(str).str.strip()
-            hits = s.str.contains(r"\d", regex=True, na=False).sum()
-            if int(hits) > best_hits:
-                best_hits, best_col = int(hits), j
-        col_score = best_col
+    # Elegir la mejor columna de puntaje si no hay encabezado claro
+    def _col_mas_numerica(df_slice):
+        best_col, best_score = None, -1.0
+        for j in range(df_slice.shape[1]):
+            s = df_slice.iloc[:, j].astype(str).str.strip()
+            s2 = s.str.replace("\u00a0", " ", regex=False)
+            s2 = s2.str.replace(r"[^0-9\.,\-]+", "", regex=True)
+            def _to_num_str(x):
+                if x == "" or pd.isna(x): return ""
+                x = str(x)
+                if "." in x and "," in x: x = x.replace(".", "").replace(",", ".")
+                elif "," in x and "." not in x: x = x.replace(",", ".")
+                if x.count(".") > 1:
+                    first = x.find("."); x = x[:first+1] + x[first+1:].replace(".", "")
+                return x
+            s3 = s2.apply(_to_num_str)
+            nums = pd.to_numeric(s3, errors="coerce")
+            valid = nums.between(0, 1000, inclusive="both")
+            score = valid.mean()
+            if score > best_score:
+                best_score, best_col = score, j
+        return best_col
 
+    if col_score is None:
+        col_score = _col_mas_numerica(sub)
+
+    # Normalización robusta de puntajes
     puntajes_raw = sub.iloc[:, col_score].astype(str).str.strip()
     puntajes_raw = puntajes_raw.str.replace("\u00a0", " ", regex=False)
-    puntajes_raw = puntajes_raw.replace({'^[oO-]$': ''}, regex=True)
+    puntajes_raw = puntajes_raw.replace({'^[oO-]$': ''}, regex=True)  # omitidas
     puntajes_raw = puntajes_raw.str.replace(r"[^0-9\.,\-]+", "", regex=True)
-    # Normalizar a string numérico estándar
+
     def _to_num_str(s: str) -> str:
         if s is None: return ""
         s = s.strip()
         if s == "": return ""
-        if "." in s and "," in s: s = s.replace(".", "").replace(",", ".")
-        elif "," in s and "." not in s: s = s.replace(",", ".")
+        if "." in s and "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s and "." not in s:
+            s = s.replace(",", ".")
         if s.count(".") > 1:
             first = s.find(".")
             s = s[:first+1] + s[first+1:].replace(".", "")
         return s
+
     puntajes_norm = puntajes_raw.apply(_to_num_str)
     puntajes = pd.to_numeric(puntajes_norm, errors="coerce")
     puntajes = puntajes[mask_valid]
 
     out = pd.DataFrame({
         "NOMBRE ESTUDIANTE": nombres.str.replace(r"\s+", " ", regex=True).str.strip().values,
-        "SIMCE 1": puntajes.values
+        "Puntaje Ensayo 1": puntajes.values
     })
     out = out[out["NOMBRE ESTUDIANTE"] != ""].reset_index(drop=True)
     return out
@@ -174,7 +211,6 @@ def extraer_datos(
 uploaded_file = st.file_uploader("Sube el archivo Excel complejo (múltiples hojas)", type=["xlsx"], key="archivo_complejo")
 
 if uploaded_file:
-    # Guardamos bytes y ExcelFile para reutilizar en otras funciones
     complex_bytes = uploaded_file.getvalue()
     st.session_state["complex_bytes"] = complex_bytes
     st.session_state["xls_complex"] = pd.ExcelFile(BytesIO(complex_bytes))
@@ -192,7 +228,6 @@ if uploaded_file:
             st.dataframe(df_extraido.head(10))
             df_cursos[hoja] = df_extraido
 
-            # Descarga individual
             out = BytesIO()
             with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
                 df_extraido.to_excel(writer, index=False, sheet_name='Resultados')
@@ -205,11 +240,9 @@ if uploaded_file:
         else:
             st.warning(f"No se extrajeron datos en {hoja}.")
 
-    # Guardamos todos los cursos para funciones siguientes
     if df_cursos:
         st.session_state["df_cursos"] = df_cursos
 
-    # Excel normalizado con todas las hojas
     st.subheader("📦 Exportar todas las hojas a un único Excel normalizado")
     combined_output = BytesIO()
     with pd.ExcelWriter(combined_output, engine='xlsxwriter') as writer:
@@ -255,7 +288,11 @@ if "df_cursos" in st.session_state:
     for hoja, dfh in dfc.items():
         col = cols[i % 2]
         with col:
-            serie = dfh["SIMCE 1"].apply(clasificar)
+            score_col = _detectar_col_puntaje(dfh)
+            if not score_col:
+                st.warning(f"No se encontró columna de puntajes en {hoja}.")
+                continue
+            serie = dfh[score_col].apply(clasificar)
             counts = serie.value_counts().reindex(["Insuficiente","Intermedio","Adecuado"], fill_value=0)
             for k in total_counts: total_counts[k] += int(counts[k])
 
@@ -267,7 +304,6 @@ if "df_cursos" in st.session_state:
             st.pyplot(fig)
         i += 1
 
-    # Global
     st.subheader("🔵 Distribución global (todos los cursos)")
     fig, ax = plt.subplots(figsize=(6, 4))
     vals = list(total_counts.values())
@@ -289,8 +325,8 @@ uploaded_consolidado = st.file_uploader(
 )
 
 if uploaded_consolidado and "xls_complex" in st.session_state:
-    xls_comp = st.session_state["xls_complex"]     # archivo complejo recién subido
-    xls_cons = pd.ExcelFile(uploaded_consolidado)  # consolidado histórico
+    xls_comp = st.session_state["xls_complex"]
+    xls_cons = pd.ExcelFile(uploaded_consolidado)
 
     resumen = []
     output_consol = BytesIO()
@@ -331,15 +367,25 @@ if uploaded_consolidado and "xls_complex" in st.session_state:
             df_new = df_new.copy()
             df_new["__tokens"]  = df_new["NOMBRE ESTUDIANTE"].map(_tokens)
             df_new["__key"]     = df_new["__tokens"].map(_bow_key)
-            df_new["SIMCE 1"]   = pd.to_numeric(df_new["SIMCE 1"], errors="coerce")
 
-            # merge principal (NO traemos __tokens del lado derecho)
-            df_merge = df_cons.merge(df_new[["__key","SIMCE 1"]], on="__key", how="left")
+            # detectar columna de puntaje del normalizado (Puntaje Ensayo 1 o SIMCE 1)
+            col_puntaje_new = "Puntaje Ensayo 1" if "Puntaje Ensayo 1" in df_new.columns else (
+                "SIMCE 1" if "SIMCE 1" in df_new.columns else None
+            )
+            if col_puntaje_new is None:
+                df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
+                resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
+                continue
+
+            df_new[col_puntaje_new] = pd.to_numeric(df_new[col_puntaje_new], errors="coerce")
+
+            # merge principal
+            df_merge = df_cons.merge(df_new[["__key", col_puntaje_new]], on="__key", how="left")
             df_merge["__tokens"] = df_cons["__tokens"].values  # para fallback
 
-            # fallback Jaccard + subset
-            no_match_idx = df_merge.index[df_merge["SIMCE 1"].isna()].tolist()
-            candidates = list(df_new[["__tokens","SIMCE 1"]].itertuples(index=False, name=None))
+            # Fallback (subset + jaccard)
+            no_match_idx = df_merge.index[df_merge[col_puntaje_new].isna()].tolist()
+            candidates = list(df_new[["__tokens", col_puntaje_new]].itertuples(index=False, name=None))
             for idx in no_match_idx:
                 toks_cons = df_merge.at[idx, "__tokens"]
                 if not toks_cons:
@@ -355,7 +401,7 @@ if uploaded_consolidado and "xls_complex" in st.session_state:
                         best_sim, best_val = 1.0, val
                         break
 
-                # Jaccard permisivo si no hubo subconjunto
+                # Jaccard permisivo
                 if np.isnan(best_val):
                     for toks_new, val in candidates:
                         if not toks_new:
@@ -366,14 +412,15 @@ if uploaded_consolidado and "xls_complex" in st.session_state:
                             best_sim, best_val = sim, val
 
                 if not np.isnan(best_val):
-                    df_merge.at[idx, "SIMCE 1"] = best_val
+                    df_merge.at[idx, col_puntaje_new] = best_val
 
-            # crear nueva columna secuencial
+            # nueva columna secuencial
             nueva_col = _next_ensayo_col(df_cons, col_nombres)
-            df_merge[nueva_col] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
+            df_merge[nueva_col] = pd.to_numeric(df_merge[col_puntaje_new], errors="coerce")
 
             # limpiar auxiliares
-            df_merge.drop(columns=["__key","__tokens","SIMCE 1","NOMBRE ESTUDIANTE_new","__tokens_new"],
+            df_merge.drop(columns=["__key","__tokens", col_puntaje_new,
+                                   "NOMBRE ESTUDIANTE_new","__tokens_new"],
                           inplace=True, errors="ignore")
 
             coinc = int(df_merge[nueva_col].notna().sum())
@@ -433,7 +480,7 @@ else:
         if df_est.empty:
             st.info("No se encontró información para el estudiante seleccionado.")
         else:
-            # columnas de puntajes (mantener orden original, incluir 'puntaje'/'simce'/'ensayo' o numéricas)
+            # columnas de puntajes (mantener orden original)
             cols_puntajes = []
             for c in df_est.columns:
                 if c == col_nombres: continue
@@ -442,6 +489,7 @@ else:
                 has_kw = any(k in str(c).lower() for k in ("simce","puntaje","ensayo"))
                 if is_num or has_kw:
                     cols_puntajes.append(c)
+
             if not cols_puntajes:
                 st.warning("No se encontraron columnas de puntajes en esta hoja.")
             else:
@@ -507,7 +555,6 @@ else:
             ensayos.sort()
             ultima_col = ensayos[-1][1]
         else:
-            # fallback: última columna numérica
             cand = [c for c in df_low.columns if c != col_nombres and pd.api.types.is_numeric_dtype(df_low[c])]
             if not cand:
                 st.warning(f"No hay columnas de puntajes en {hoja}")
@@ -541,7 +588,7 @@ else:
     preguntas_fil = [preguntas[i] for i in valid_idx]
 
     # Respuestas de estudiantes
-    respuestas = df_preg.iloc[10:56, 3:68]      # D11:BP56
+    respuestas = df_preg.iloc[10:80, 3:68]      # D11:BP80 (por si hay más filas)
 
     resumen = []
     for pos, clave in zip(valid_idx, claves_fil):
@@ -551,7 +598,7 @@ else:
         pct = aciertos / total * 100 if total > 0 else 0
 
         # Conteos de alternativas A..E
-        conteos_col = 3 + pos  # porque el slice empezó en D=3
+        conteos_col = 3 + pos
         conteos = df_preg.iloc[59:64, conteos_col]  # filas 60-64 (A..E)
         alternativas = ["A", "B", "C", "D", "E"]
         dist = dict(zip(alternativas, conteos))
@@ -563,7 +610,7 @@ else:
         except Exception:
             pass
 
-        # Detectar observaciones
+        # Observaciones
         obs = ""
         total_resps = float(sum([v for v in dist.values() if pd.notna(v)])) if dist else 0.0
         if total_resps > 0:
@@ -573,14 +620,11 @@ else:
                     dist_pct[k] = float(v) / total_resps * 100.0
                 except:
                     dist_pct[k] = 0.0
-            # Quitar la correcta
             dist_inc = {k: v for k, v in dist_pct.items() if k.lower() != str(clave).lower()}
             if dist_inc:
-                # Distractor fuerte: una incorrecta > 50%
                 max_alt = max(dist_inc, key=dist_inc.get)
                 if dist_inc[max_alt] > 50:
                     obs = f"Distractor fuerte: {max_alt}"
-                # Alta dispersión solo si bajo % de acierto
                 vals = list(dist_inc.values())
                 if pct < 50 and len(vals) > 1 and (max(vals) - min(vals) < 10):
                     obs = "Alta dispersión"
