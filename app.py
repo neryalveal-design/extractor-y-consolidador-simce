@@ -353,10 +353,11 @@ elif uploaded_consolidado and not uploaded_file:
 
 
 # ================================
-# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (final, robusta y sin re-subir archivos)
+# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (con conversión robusta de puntajes)
 # ================================
 import matplotlib.pyplot as plt
 import numpy as np
+import re
 
 st.header("🎯 Análisis por estudiante")
 
@@ -397,22 +398,43 @@ else:
                     continue
                 serie = df_est[c]
                 is_num = pd.api.types.is_numeric_dtype(serie)
-                has_kw = ("simce" in str(c).lower()) or ("puntaje" in str(c).lower())
+                has_kw = ("simce" in str(c).lower()) or ("puntaje" in str(c).lower()) or ("ensayo" in str(c).lower())
                 if is_num or has_kw:
                     cols_puntajes.append(c)
 
             if not cols_puntajes:
                 st.warning("No se encontraron columnas de puntajes en esta hoja.")
             else:
-                # --- Conversión robusta a numérico (vectorizada, segura) ---
+                # --- Conversión robusta a numérico (sin romper decimales ya numéricos) ---
                 row_raw = df_est[cols_puntajes].iloc[0]
-                row_str = row_raw.astype(str).str.strip()
-                row_str = row_str.str.replace("\u00a0", " ", regex=False)   # NBSP -> espacio
-                row_str = row_str.str.replace(".", "", regex=False)         # quitar separador de miles
-                row_str = row_str.str.replace(",", ".", regex=False)        # coma decimal -> punto
-                row_str = row_str.where(row_str.ne(""), np.nan)
-                row_str = row_str.where(~row_str.str.contains("nan", case=False, na=False), np.nan)
-                row_num = pd.to_numeric(row_str, errors="coerce")
+
+                def parse_val(v):
+                    # Ya numérico
+                    if isinstance(v, (int, float, np.number)) and not pd.isna(v):
+                        return float(v)
+                    # A texto normalizado
+                    s = "" if pd.isna(v) else str(v).strip()
+                    if s == "" or s.lower() in {"nan", "none", "-"}:
+                        return np.nan
+                    s = s.replace("\u00a0", " ")  # NBSP
+                    # Casos con ambos separadores estilo EU: 1.234,56
+                    if "." in s and "," in s:
+                        s = s.replace(".", "").replace(",", ".")
+                    # Solo coma decimal: 269,5652174
+                    elif "," in s and "." not in s:
+                        s = s.replace(",", ".")
+                    # Quitar cualquier carácter no numérico relevante (mantener solo dígitos, primer punto y signo)
+                    s = re.sub(r"[^0-9\.\-]", "", s)
+                    # Asegurar solo un punto decimal
+                    if s.count(".") > 1:
+                        first = s.find(".")
+                        s = s[:first+1] + s[first+1:].replace(".", "")
+                    try:
+                        return float(s)
+                    except:
+                        return np.nan
+
+                row_num = row_raw.apply(parse_val)
 
                 mask = row_num.notna()
                 x_labels = list(row_num.index[mask])
@@ -431,7 +453,7 @@ else:
                     else:
                         offset = 5
                     for i, yi in enumerate(y_vals):
-                        ax.text(i, yi + offset, f"{int(round(yi))}", ha="center", fontsize=9)
+                        ax.text(i, yi + offset, f"{yi:.2f}", ha="center", fontsize=9)
 
                     ax.set_title(f"Evolución del rendimiento - {estudiante_sel} ({curso_sel})")
                     ax.set_ylabel("Puntaje")
