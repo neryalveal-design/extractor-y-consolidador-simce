@@ -401,9 +401,32 @@ if uploaded_file and uploaded_consolidado:
             df_new["__key"]  = df_new["NOMBRE ESTUDIANTE"].map(_norm)
 
             # Unir por clave normalizada (solo traemos la nota)
+            # Detectar la columna de puntajes en df_new
+            col_puntaje_new = None
+            for col in df_new.columns:
+                col_low = str(col).lower()
+                if "simce" in col_low or "puntaje" in col_low:
+                    col_puntaje_new = col
+                    break
+
+            if col_puntaje_new is None:
+                st.warning(f"No se encontró ninguna columna de puntajes en los datos nuevos para la hoja {hoja}.")
+                df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
+                resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
+                continue
+
+            # Hacer el merge usando el nombre detectado
             df_merge = df_cons.merge(
-                df_new[["__key", "SIMCE 1"]], on="__key", how="left"
+                df_new[["__key", col_puntaje_new]], on="__key", how="left"
             )
+
+            # Crear la nueva columna con tipo numérico
+            df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge[col_puntaje_new], errors="coerce")
+
+            # Limpiar columnas auxiliares
+            df_merge.drop(columns=["__key", col_puntaje_new], inplace=True, errors="ignore")
+            if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
+                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
 
             # Crear la nueva columna con tipo numérico
             df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
