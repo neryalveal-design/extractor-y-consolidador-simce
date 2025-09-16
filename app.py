@@ -324,13 +324,15 @@ elif uploaded_consolidado and not uploaded_file:
 
 
 # ================================
-# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE
+# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (robusta a columnas texto)
 # ================================
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 st.header("🎯 Análisis por estudiante")
 
-# Verificamos que ya exista el consolidado en memoria
+# Reutiliza el consolidado creado en la Función 3
 if "consolidado_xls" not in st.session_state:
     st.warning("⚠️ Primero debes ejecutar la función 3 (Consolidación de puntajes).")
 else:
@@ -355,10 +357,10 @@ else:
         # Selección de estudiante
         estudiante_sel = st.selectbox("Elige un estudiante", df_curso[col_nombres].dropna().unique())
 
-        # Extraer fila del estudiante
+        # Fila del estudiante
         df_est = df_curso[df_curso[col_nombres] == estudiante_sel].copy()
 
-        # Detectar columnas de puntajes
+        # Detectar columnas de puntajes (numéricas o con keywords)
         cols_puntajes = [
             c for c in df_est.columns
             if c != col_nombres and pd.api.types.is_numeric_dtype(df_est[c])
@@ -371,41 +373,55 @@ else:
         if not cols_puntajes:
             st.warning("No se encontraron columnas de puntajes en esta hoja.")
         else:
-            # Orden cronológico aproximado
+            # Orden aproximado (por nombre)
             cols_puntajes = sorted(cols_puntajes)
 
-            puntajes = df_est[cols_puntajes].iloc[0].tolist()
+            # --- Conversión robusta a numérico ---
+            row_raw = df_est[cols_puntajes].iloc[0]
 
-            # Filtrar solo valores válidos
-            x = [c for c, p in zip(cols_puntajes, puntajes) if pd.notna(p)]
-            y = [p for p in puntajes if pd.notna(p)]
+            def to_number(v):
+                if pd.isna(v):
+                    return np.nan
+                if isinstance(v, (int, float, np.number)):
+                    return pd.to_numeric(v, errors="coerce")
+                s = str(v).strip()
+                if s == "":
+                    return np.nan
+                # Quitar miles y normalizar coma decimal
+                s = s.replace(".", "")
+                s = s.replace(",", ".")
+                return pd.to_numeric(s, errors="coerce")
+
+            row_num = row_raw.apply(to_number)
+
+            mask = row_num.notna()
+            x = list(row_raw.index[mask])
+            y = list(row_num[mask].astype(float))
 
             if not y:
                 st.info(f"No hay puntajes disponibles para {estudiante_sel}.")
             else:
-                # Crear gráfico
+                # Gráfico
                 fig, ax = plt.subplots(figsize=(7, 4))
-                ax.plot(x, y, marker="o", linestyle="-", color="blue")
+                ax.plot(range(len(x)), y, marker="o", linestyle="-")
 
-                # Anotar valores en cada punto
-                for i, (xi, yi) in enumerate(zip(x, y)):
-                    ax.text(i, yi + 5, str(int(yi)), ha="center", fontsize=9)
+                # Anotar valores (con desplazamiento seguro)
+                offset = (max(y) - min(y)) * 0.03 if len(y) > 1 else 5
+                for i, yi in enumerate(y):
+                    ax.text(i, yi + (offset if np.isfinite(yi) else 0), f"{int(round(yi))}", ha="center", fontsize=9)
 
                 ax.set_title(f"Evolución del rendimiento - {estudiante_sel} ({curso_sel})")
                 ax.set_ylabel("Puntaje")
                 ax.set_xlabel("Ensayos")
                 ax.grid(True)
-
-                # 🔧 Ajustar etiquetas del eje X
                 ax.set_xticks(range(len(x)))
                 ax.set_xticklabels(x, fontsize=8, rotation=30)
 
                 st.pyplot(fig)
 
-                # Promedio
-                promedio = sum(y) / len(y)
+                # Promedio (solo válidos)
+                promedio = float(np.nanmean(np.array(y, dtype=float)))
                 st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
-
 
 # ================================
 # 📉 FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO
