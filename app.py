@@ -121,9 +121,6 @@ def extraer_datos(
     out = out[out["NOMBRE ESTUDIANTE"] != ""].reset_index(drop=True)
     return out
 
-
-        return df_limpio
-
     except Exception as e:
         st.error(f"Error procesando el archivo: {e}")
         return None
