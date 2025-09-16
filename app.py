@@ -400,6 +400,23 @@ if uploaded_file and uploaded_consolidado:
             df_cons["__key"] = df_cons[col_nombres].map(_norm)
             df_new["__key"]  = df_new["NOMBRE ESTUDIANTE"].map(_norm)
 
+            # Detectar la columna de puntajes en df_new
+            col_puntaje_new = None
+            for col in df_new.columns:
+                col_low = str(col).lower().strip()
+                if ("simce" in col_low 
+                    or "puntaje" in col_low 
+                    or col_low == "total" 
+                    or col_low == "fk"):
+                    col_puntaje_new = col
+                    break
+
+            if col_puntaje_new is None:
+                st.warning(f"No se encontró ninguna columna de puntajes en los datos nuevos para la hoja {hoja}.")
+                df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
+                resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
+                continue
+
             # Unir por clave normalizada (solo traemos la nota)
             df_merge = df_cons.merge(
                 df_new[["__key", col_puntaje_new]], on="__key", how="left"
@@ -414,8 +431,7 @@ if uploaded_file and uploaded_consolidado:
             # Eliminar columnas auxiliares
             df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
             if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
-                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True, errors="ignore")
-            # MUY IMPORTANTE: no dejar la "NOMBRE ESTUDIANTE" del lado derecho del merge
+                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True, errors="ignore")# MUY IMPORTANTE: no dejar la "NOMBRE ESTUDIANTE" del lado derecho del merge
             if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
                 df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
 
