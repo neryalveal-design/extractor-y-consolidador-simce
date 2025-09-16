@@ -219,66 +219,79 @@ if uploaded_file:
         st.pyplot(fig_total)
 
 # ================================
-# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES (nombra "Puntaje Ensayo n")
+# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES (match robusto de nombres + 'Puntaje Ensayo n')
 # ================================
 from io import BytesIO
-import re, unicodedata
+import unicodedata, re
+import numpy as np
 
-st.header("📂 Consolidación de puntajes (con nombre secuencial)")
+st.header("📂 Consolidación de puntajes (emparejo robusto de nombres)")
 
-def _norm(s: str) -> str:
-    """Normaliza nombres para emparejar (minúsculas, sin tildes, sin dobles espacios)."""
+# Stopwords típicas en nombres hispanos que no aportan a la coincidencia
+_STOP = {"de", "del", "la", "las", "los", "y", "e", "da", "do", "das", "dos"}
+
+def _norm_text(s: str) -> str:
     if s is None:
         return ""
     s = str(s).strip().lower().replace("\u00a0", " ")
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     s = re.sub(r"[^a-z0-9\s]", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
-def _siguiente_nombre_ensayo(df_cons: pd.DataFrame, col_nombres: str) -> str:
-    """
-    Determina el próximo nombre 'Puntaje Ensayo n' disponible en esta hoja.
-    - Busca existentes 'Puntaje Ensayo N' y toma el N máximo + 1.
-    - Si no hay, estima N como (# columnas de puntaje visibles) + 1.
-    - Garantiza unicidad del nombre.
-    """
-    # 1) Buscar 'Puntaje Ensayo n' existentes
-    existentes = []
+def _tokens(s: str) -> set:
+    toks = [t for t in _norm_text(s).split() if t and t not in _STOP]
+    return set(toks)
+
+def _bow_key(tokens: set) -> str:
+    # Clave insensible al orden
+    return " ".join(sorted(tokens))
+
+def _jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
+
+def _next_ensayo_col(df_cons: pd.DataFrame, col_nombres: str) -> str:
+    # Buscar "Puntaje Ensayo N" existentes para definir el siguiente N
+    nums = []
     for c in df_cons.columns:
-        m = re.match(r"(?i)puntaje\s+ensayo\s+(\d+)$", str(c).strip())
+        m = re.fullmatch(r"(?i)puntaje\s+ensayo\s+(\d+)", str(c).strip())
         if m:
             try:
-                existentes.append(int(m.group(1)))
+                nums.append(int(m.group(1)))
             except:
                 pass
-    if existentes:
-        next_n = max(existentes) + 1
+    if nums:
+        n = max(nums) + 1
     else:
-        # 2) Aproximar cuántos ensayos hay según columnas "simce/puntaje/ensayo"
-        candidatos = [c for c in df_cons.columns
-                      if c != col_nombres and re.search(r"(?i)(simce|puntaje|ensayo)", str(c))]
-        next_n = max(2, len(candidatos) + 1)  # empieza en 2 si nada claro
-
-    nombre = f"Puntaje Ensayo {next_n}"
-    # 3) Garantizar unicidad por si acaso
-    while nombre in df_cons.columns:
-        next_n += 1
-        nombre = f"Puntaje Ensayo {next_n}"
-    return nombre
+        # Estimar n inicial según columnas que parecen puntajes
+        cand = [c for c in df_cons.columns
+                if c != col_nombres and re.search(r"(?i)(simce|puntaje|ensayo)", str(c))]
+        n = max(2, len(cand) + 1)
+    name = f"Puntaje Ensayo {n}"
+    while name in df_cons.columns:
+        n += 1
+        name = f"Puntaje Ensayo {n}"
+    return name
 
 uploaded_consolidado = st.file_uploader(
     "Sube el archivo consolidado anterior (todas las hojas de cursos)",
-    type=["xlsx"],
-    key="consolidado_secuencial"
+    type=["xlsx"], key="consol_robusto"
 )
 
 if uploaded_file and uploaded_consolidado:
-    xls_comp = pd.ExcelFile(uploaded_file)            # archivo complejo (Función 1)
-    xls_cons = pd.ExcelFile(uploaded_consolidado)     # consolidado histórico a actualizar
+    xls_comp = pd.ExcelFile(uploaded_file)        # archivo complejo (Función 1)
+    xls_cons = pd.ExcelFile(uploaded_consolidado) # consolidado histórico
 
     resumen = []
     output_consol = BytesIO()
+
     with pd.ExcelWriter(output_consol, engine="xlsxwriter") as writer:
         for hoja in xls_cons.sheet_names:
             df_cons = pd.read_excel(xls_cons, sheet_name=hoja)
@@ -286,18 +299,17 @@ if uploaded_file and uploaded_consolidado:
             # Detectar columna de nombres en el consolidado
             col_nombres = None
             for col in df_cons.columns:
-                cl = str(col).lower()
-                if "nombre" in cl and "estudiante" in cl:
+                c = str(col).lower()
+                if "nombre" in c and "estudiante" in c:
                     col_nombres = col
                     break
 
             if col_nombres is None:
-                # No hay columna de nombres; guardar tal cual
                 df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # Extraer puntajes nuevos para esta hoja desde el archivo complejo usando tu limpiador
+            # Extraer datos nuevos desde el archivo complejo con tu extractor
             try:
                 df_raw = pd.read_excel(xls_comp, sheet_name=hoja, header=None)
                 df_new = extraer_datos(df_raw) if 'extraer_datos' in globals() else None
@@ -305,35 +317,61 @@ if uploaded_file and uploaded_consolidado:
                 df_new = None
 
             if df_new is None or df_new.empty or "NOMBRE ESTUDIANTE" not in df_new.columns:
-                # Sin datos nuevos: solo asegurar orden y escribir
                 df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # Normalizar claves
-            df_cons["__key"] = df_cons[col_nombres].map(_norm)
-            df_new["__key"]  = df_new["NOMBRE ESTUDIANTE"].map(_norm)
+            # --- Preparar claves robustas (bolsa de tokens) ---
+            df_cons["__tokens"] = df_cons[col_nombres].map(_tokens)
+            df_cons["__key"]    = df_cons["__tokens"].map(_bow_key)
 
-            # Unir por clave normalizada y crear columna nueva
-            df_merge = df_cons.merge(df_new[["__key", "SIMCE 1"]], on="__key", how="left")
-            nombre_col_nuevo = _siguiente_nombre_ensayo(df_cons, col_nombres)
-            df_merge[nombre_col_nuevo] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
+            df_new = df_new.copy()
+            df_new["__tokens"]  = df_new["NOMBRE ESTUDIANTE"].map(_tokens)
+            df_new["__key"]     = df_new["__tokens"].map(_bow_key)
+            df_new["SIMCE 1"]   = pd.to_numeric(df_new["SIMCE 1"], errors="coerce")
 
-            # Limpiar auxiliares
-            df_merge.drop(columns=["__key", "SIMCE 1"], inplace=True, errors="ignore")
-            # (Por si en algún merge se colara una 2ª columna de nombres desde la derecha)
-            if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
-                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True, errors="ignore")
+            # 1) Emparejo primario por clave BOW (insensible al orden)
+            df_merge = df_cons.merge(
+                df_new[["__key", "__tokens", "SIMCE 1"]],
+                on="__key", how="left", suffixes=("", "_new")
+            )
 
-            # Resumen por hoja
-            coinc = int(df_merge[nombre_col_nuevo].notna().sum())
-            sinco = int(df_merge[nombre_col_nuevo].isna().sum())
-            resumen.append({"Hoja": hoja, "Coincidencias": coinc, "Sin coincidencia": sinco, "Nueva columna": nombre_col_nuevo})
+            # 2) Fallback: Jaccard si quedó sin match (maneja nombres incompletos/extra tokens)
+            no_match_idx = df_merge.index[df_merge["SIMCE 1"].isna()].tolist()
+            # Lista de candidatos (índice -> (tokens, puntaje))
+            candidates = list(df_new[["__tokens", "SIMCE 1"]].itertuples(index=False, name=None))
 
-            # Guardar hoja
+            used = set()  # para no reutilizar el mismo registro nuevo muchas veces
+            for idx in no_match_idx:
+                toks_cons = df_merge.at[idx, "__tokens"]
+                best_sim, best_val, best_j = 0.0, np.nan, -1
+                for j, (toks_new, val) in enumerate(candidates):
+                    if j in used:
+                        continue
+                    sim = _jaccard(toks_cons, toks_new)
+                    # criterio: similitud alta o subset casi completo
+                    if sim > best_sim:
+                        best_sim, best_val, best_j = sim, val, j
+                # Umbral razonable (≥0.75) o subset fuerte (≥0.66 con al menos 2 tokens)
+                if (best_sim >= 0.75) or (len(toks_cons) >= 2 and best_sim >= 0.66):
+                    df_merge.at[idx, "SIMCE 1"] = best_val
+                    used.add(best_j)
+
+            # 3) Crear nueva columna 'Puntaje Ensayo n'
+            nueva_col = _next_ensayo_col(df_cons, col_nombres)
+            df_merge[nueva_col] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
+
+            # 4) Limpiar auxiliares
+            df_merge.drop(columns=["__key", "__tokens", "SIMCE 1"], inplace=True, errors="ignore")
+
+            # 5) Resumen y escritura
+            coinc = int(df_merge[nueva_col].notna().sum())
+            sinco = int(df_merge[nueva_col].isna().sum())
+            resumen.append({"Hoja": hoja, "Coincidencias": coinc, "Sin coincidencia": sinco, "Nueva columna": nueva_col})
+
             df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
 
-    # Mostrar resumen y descargar
+    # Mostrar resumen y habilitar descarga
     st.subheader("📋 Resumen de consolidación")
     st.dataframe(pd.DataFrame(resumen))
 
@@ -350,7 +388,6 @@ if uploaded_file and uploaded_consolidado:
 
 elif uploaded_consolidado and not uploaded_file:
     st.info("⚠️ Sube también el archivo complejo en la sección 'EXTRAER PUNTAJES' para poder consolidar.")
-
 
 # ================================
 # 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (con conversión robusta de puntajes)
