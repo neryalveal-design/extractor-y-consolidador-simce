@@ -4,6 +4,7 @@
 # ===================================================
 
 import re
+import io
 import unicodedata
 from io import BytesIO
 
@@ -130,56 +131,44 @@ def extraer_datos(
     """
     Extrae nombres y puntajes desde una hoja del archivo complejo tipo SIMCE/Ensayo.
     Devuelve DataFrame con columnas ['NOMBRE ESTUDIANTE', 'Puntaje Ensayo 1'] (float).
-    Incluye un FALBACK fila-a-fila para puntajes faltantes.
     """
     headers = df_raw.iloc[fila_encabezado].astype(str).str.lower().fillna("")
 
-    # --- Columna de nombres ---
+    # Columna de nombres
     cand_name_cols = [i for i, v in enumerate(headers) if ("nombre" in v and "estudiante" in v)]
     col_name = cand_name_cols[0] if cand_name_cols else fallback_nombre_col
 
-    # --- Columna de puntaje (por encabezado) ---
+    # Columna de puntaje (por encabezado)
     cand_score_cols = [i for i, v in enumerate(headers)
                        if ("puntaje" in v and ("simce" in v or "ensayo" in v))]
     col_score = cand_score_cols[0] if cand_score_cols else None
 
-    # --- Rango de estudiantes ---
+    # Rango de estudiantes
     sub = df_raw.iloc[fila_ini:fila_fin].copy()
 
-    # --- Nombres y filtro de válidos ---
+    # Serie de nombres y filtro de válidos
     nombres = sub.iloc[:, col_name].astype(str).str.strip()
     invalid = {"", "nan", "nombre estudiante", "curso", "correctas", "a", "b", "c", "d", "e"}
     mask_valid = ~nombres.str.lower().isin(invalid)
+    nombres = nombres[mask_valid]
 
-    # ---------- Utilidades numéricas ----------
-    def _to_num_str(s: str) -> str:
-        if s is None:
-            return ""
-        s = str(s).strip()
-        if s == "":
-            return ""
-        if "." in s and "," in s:
-            s = s.replace(".", "").replace(",", ".")   # 1.234,56 -> 1234.56
-        elif "," in s and "." not in s:
-            s = s.replace(",", ".")                    # 269,56 -> 269.56
-        if s.count(".") > 1:
-            first = s.find(".")
-            s = s[:first+1] + s[first+1:].replace(".", "")
-        return s
-
-    def _serie_to_num(sr: pd.Series) -> pd.Series:
-        sr = sr.astype(str).str.strip()
-        sr = sr.str.replace("\u00a0", " ", regex=False)
-        sr = sr.replace({'^[oO-]$': ''}, regex=True)      # 'o'/'O'/'-' -> omitida
-        sr = sr.str.replace(r"[^0-9\.,\-]+", "", regex=True)
-        sr = sr.apply(_to_num_str)
-        return pd.to_numeric(sr, errors="coerce")
-
-    # --- Elegir mejor columna de puntaje si no hay encabezado claro ---
+    # Elegir la mejor columna de puntaje si no hay encabezado claro
     def _col_mas_numerica(df_slice):
         best_col, best_score = None, -1.0
         for j in range(df_slice.shape[1]):
-            nums = _serie_to_num(df_slice.iloc[:, j])
+            s = df_slice.iloc[:, j].astype(str).str.strip()
+            s2 = s.str.replace("\u00a0", " ", regex=False)
+            s2 = s2.str.replace(r"[^0-9\.,\-]+", "", regex=True)
+            def _to_num_str(x):
+                if x == "" or pd.isna(x): return ""
+                x = str(x)
+                if "." in x and "," in x: x = x.replace(".", "").replace(",", ".")
+                elif "," in x and "." not in x: x = x.replace(",", ".")
+                if x.count(".") > 1:
+                    first = x.find("."); x = x[:first+1] + x[first+1:].replace(".", "")
+                return x
+            s3 = s2.apply(_to_num_str)
+            nums = pd.to_numeric(s3, errors="coerce")
             valid = nums.between(0, 1000, inclusive="both")
             score = valid.mean()
             if score > best_score:
@@ -189,42 +178,32 @@ def extraer_datos(
     if col_score is None:
         col_score = _col_mas_numerica(sub)
 
-    # --- Lectura inicial de puntajes ---
-    puntajes = _serie_to_num(sub.iloc[:, col_score])
-    # Alinear con filas válidas de nombre
-    nombres_valid = nombres[mask_valid]
-    puntajes_valid = puntajes[mask_valid].copy()
+    # Normalización robusta de puntajes
+    puntajes_raw = sub.iloc[:, col_score].astype(str).str.strip()
+    puntajes_raw = puntajes_raw.str.replace("\u00a0", " ", regex=False)
+    puntajes_raw = puntajes_raw.replace({'^[oO-]$': ''}, regex=True)  # omitidas
+    puntajes_raw = puntajes_raw.str.replace(r"[^0-9\.,\-]+", "", regex=True)
 
-    # --- Fallback fila-a-fila para faltantes ---
-    headers_full = headers
-    sub_valid = sub[mask_valid].copy()
+    def _to_num_str(s: str) -> str:
+        if s is None: return ""
+        s = s.strip()
+        if s == "": return ""
+        if "." in s and "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s and "." not in s:
+            s = s.replace(",", ".")
+        if s.count(".") > 1:
+            first = s.find(".")
+            s = s[:first+1] + s[first+1:].replace(".", "")
+        return s
 
-    def _mejor_puntaje_fila(row: pd.Series) -> float:
-        mejor = np.nan
-        mejor_desde_header = False
-        for j, cell in enumerate(row):
-            num = _serie_to_num(pd.Series([cell])).iloc[0]
-            if pd.isna(num) or not (100 <= num <= 1000):
-                continue
-            h = str(headers_full.iloc[j]).lower()
-            es_header_score = ("puntaje" in h) or ("simce" in h) or ("ensayo" in h)
-            if es_header_score:
-                mejor = num
-                mejor_desde_header = True
-            elif not mejor_desde_header:
-                if pd.isna(mejor) or num > mejor:
-                    mejor = num
-        return mejor
+    puntajes_norm = puntajes_raw.apply(_to_num_str)
+    puntajes = pd.to_numeric(puntajes_norm, errors="coerce")
+    puntajes = puntajes[mask_valid]
 
-    faltantes_idx = puntajes_valid.index[puntajes_valid.isna()]
-    if len(faltantes_idx) > 0:
-        fallback_series = sub_valid.apply(_mejor_puntaje_fila, axis=1)
-        puntajes_valid = puntajes_valid.combine_first(fallback_series)
-
-    # --- Salida ---
     out = pd.DataFrame({
-        "NOMBRE ESTUDIANTE": nombres_valid.str.replace(r"\s+", " ", regex=True).str.strip().values,
-        "Puntaje Ensayo 1": puntajes_valid.values
+        "NOMBRE ESTUDIANTE": nombres.str.replace(r"\s+", " ", regex=True).str.strip().values,
+        "Puntaje Ensayo 1": puntajes.values
     })
     out = out[out["NOMBRE ESTUDIANTE"] != ""].reset_index(drop=True)
     return out
@@ -335,94 +314,122 @@ if "df_cursos" in st.session_state:
 else:
     st.info("Primero ejecuta 'EXTRAER PUNTAJES'.")
 
-# ================================
-# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES (corregida: sin nombres en la última columna)
-# ================================
-from io import BytesIO
-import unicodedata, re
-
-st.header("📂 Consolidación de puntajes")
-
-def _norm(s: str) -> str:
-    if s is None:
-        return ""
-    s = str(s).strip().lower().replace("\u00a0", " ")
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    s = re.sub(r"[^a-z0-9\s]", " ", s)
-    return re.sub(r"\s+", " ", s).strip()
+# ===================================================
+# FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES
+# ===================================================
+st.header("📂 Consolidación de puntajes (agrega 'Puntaje Ensayo n')")
 
 uploaded_consolidado = st.file_uploader(
     "Sube el archivo consolidado anterior (todas las hojas de cursos)",
-    type=["xlsx"], key="consolidado_fix"
+    type=["xlsx"], key="consolidado_base"
 )
 
-if uploaded_file and uploaded_consolidado:
-    xls_comp = pd.ExcelFile(uploaded_file)            # archivo complejo (Función 1)
-    xls_cons = pd.ExcelFile(uploaded_consolidado)     # consolidado histórico
+if uploaded_consolidado and "xls_complex" in st.session_state:
+    xls_comp = st.session_state["xls_complex"]
+    xls_cons = pd.ExcelFile(uploaded_consolidado)
 
     resumen = []
     output_consol = BytesIO()
+
     with pd.ExcelWriter(output_consol, engine="xlsxwriter") as writer:
         for hoja in xls_cons.sheet_names:
             df_cons = pd.read_excel(xls_cons, sheet_name=hoja)
 
-            # Detectar columna de nombres en el consolidado
+            # columna de nombres
             col_nombres = None
             for col in df_cons.columns:
-                c = str(col).lower()
-                if "nombre" in c and "estudiante" in c:
+                lc = str(col).lower()
+                if "nombre" in lc and "estudiante" in lc:
                     col_nombres = col
                     break
 
             if col_nombres is None:
-                # No hay columna de nombres; guardar tal cual
                 df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # Intentar extraer para esta hoja los nuevos puntajes desde el archivo complejo
+            # extraer datos nuevos desde el complejo (misma hoja)
             try:
                 df_raw = pd.read_excel(xls_comp, sheet_name=hoja, header=None)
-                df_new = extraer_datos(df_raw) if 'extraer_datos' in globals() else None
+                df_new = extraer_datos(df_raw)
             except Exception:
                 df_new = None
 
             if df_new is None or df_new.empty or "NOMBRE ESTUDIANTE" not in df_new.columns:
-                # No hay datos nuevos; agregar columna vacía (si no existe) y guardar
-                if "SIMCE Nuevo" not in df_cons.columns:
-                    df_cons["SIMCE Nuevo"] = pd.NA
                 df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # Normalizar claves
-            df_cons["__key"] = df_cons[col_nombres].map(_norm)
-            df_new["__key"]  = df_new["NOMBRE ESTUDIANTE"].map(_norm)
+            # claves robustas
+            df_cons["__tokens"] = df_cons[col_nombres].map(_tokens)
+            df_cons["__key"]    = df_cons["__tokens"].map(_bow_key)
 
-            # Unir por clave normalizada (solo traemos la nota)
-            df_merge = df_cons.merge(
-                df_new[["__key", "SIMCE 1"]], on="__key", how="left"
+            df_new = df_new.copy()
+            df_new["__tokens"]  = df_new["NOMBRE ESTUDIANTE"].map(_tokens)
+            df_new["__key"]     = df_new["__tokens"].map(_bow_key)
+
+            # detectar columna de puntaje del normalizado (Puntaje Ensayo 1 o SIMCE 1)
+            col_puntaje_new = "Puntaje Ensayo 1" if "Puntaje Ensayo 1" in df_new.columns else (
+                "SIMCE 1" if "SIMCE 1" in df_new.columns else None
             )
+            if col_puntaje_new is None:
+                df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
+                resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
+                continue
 
-            # Crear la nueva columna con tipo numérico
-            df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
+            df_new[col_puntaje_new] = pd.to_numeric(df_new[col_puntaje_new], errors="coerce")
 
-            # Eliminar TODAS las columnas auxiliares que podrían colarse al final
-            df_merge.drop(columns=["__key", "SIMCE 1"], inplace=True, errors="ignore")
-            # MUY IMPORTANTE: no dejar la "NOMBRE ESTUDIANTE" del lado derecho del merge
-            if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
-                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
+            # merge principal
+            df_merge = df_cons.merge(df_new[["__key", col_puntaje_new]], on="__key", how="left")
+            df_merge["__tokens"] = df_cons["__tokens"].values  # para fallback
 
-            # Contar coincidencias
-            coinc = int(df_merge["SIMCE Nuevo"].notna().sum())
-            sinco = int(df_merge["SIMCE Nuevo"].isna().sum())
-            resumen.append({"Hoja": hoja, "Coincidencias": coinc, "Sin coincidencia": sinco})
+            # Fallback (subset + jaccard)
+            no_match_idx = df_merge.index[df_merge[col_puntaje_new].isna()].tolist()
+            candidates = list(df_new[["__tokens", col_puntaje_new]].itertuples(index=False, name=None))
+            for idx in no_match_idx:
+                toks_cons = df_merge.at[idx, "__tokens"]
+                if not toks_cons:
+                    continue
+                best_sim, best_val = 0.0, np.nan
 
-            # Guardar hoja
+                # Subconjunto (≥2 tokens)
+                for toks_new, val in candidates:
+                    if not toks_new: 
+                        continue
+                    small, large = (toks_cons, toks_new) if len(toks_cons) <= len(toks_new) else (toks_new, toks_cons)
+                    if len(small) >= 2 and small.issubset(large):
+                        best_sim, best_val = 1.0, val
+                        break
+
+                # Jaccard permisivo
+                if np.isnan(best_val):
+                    for toks_new, val in candidates:
+                        if not toks_new:
+                            continue
+                        sim = _jaccard(toks_cons, toks_new)
+                        inter = len(toks_cons & toks_new)
+                        if inter >= 2 and sim > best_sim and sim >= 0.60:
+                            best_sim, best_val = sim, val
+
+                if not np.isnan(best_val):
+                    df_merge.at[idx, col_puntaje_new] = best_val
+
+            # nueva columna secuencial
+            nueva_col = _next_ensayo_col(df_cons, col_nombres)
+            df_merge[nueva_col] = pd.to_numeric(df_merge[col_puntaje_new], errors="coerce")
+
+            # limpiar auxiliares
+            df_merge.drop(columns=["__key","__tokens", col_puntaje_new,
+                                   "NOMBRE ESTUDIANTE_new","__tokens_new"],
+                          inplace=True, errors="ignore")
+
+            coinc = int(df_merge[nueva_col].notna().sum())
+            sinco = int(df_merge[nueva_col].isna().sum())
+            resumen.append({"Hoja": hoja, "Coincidencias": coinc, "Sin coincidencia": sinco, "Nueva columna": nueva_col})
+
             df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
 
-    # Mostrar resumen y permitir descarga
+    # Mostrar resumen y descargar
     st.subheader("📋 Resumen de consolidación")
     st.dataframe(pd.DataFrame(resumen))
 
@@ -433,11 +440,14 @@ if uploaded_file and uploaded_consolidado:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Reutilizar en funciones 4 y 5 sin volver a subir
+    # Guardar en memoria para F4, F5 y F6
     output_consol.seek(0)
-    st.session_state["consolidado_xls"] = pd.ExcelFile(output_consol)
-elif uploaded_consolidado and not uploaded_file:
-    st.info("⚠️ Sube también el archivo complejo en la sección 'EXTRAER PUNTAJES' para poder consolidar.")
+    cons_bytes = output_consol.getvalue()
+    st.session_state["consolidado_bytes"] = cons_bytes
+    st.session_state["consolidado_xls"] = pd.ExcelFile(BytesIO(cons_bytes))
+
+elif uploaded_consolidado and "xls_complex" not in st.session_state:
+    st.info("⚠️ Sube primero el archivo complejo en 'EXTRAER PUNTAJES' para poder consolidar.")
 
 # ===================================================
 # FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (reutiliza consolidado)
