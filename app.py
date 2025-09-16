@@ -101,15 +101,18 @@ def _parse_numeric_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
 
 def _detectar_col_puntaje(df: pd.DataFrame):
-    """Devuelve el nombre de la columna de puntaje en un normalizado o archivo complejo."""
-    preferidas = ["Puntaje Ensayo 1", "FK", "TOTAL"]
-    for col in df.columns:
-        if str(col).strip() in preferidas:
-            return col
-    # fallback: buscar nombres con "puntaje" o "simce"
-    for col in df.columns:
-        if "puntaje" in str(col).lower() or "simce" in str(col).lower():
-            return col
+    """Devuelve el nombre de la columna de puntaje en un normalizado/consolidado."""
+    preferidas = ["Puntaje Ensayo 1", "SIMCE 1"]
+    for c in preferidas:
+        if c in df.columns:
+            return c
+    for c in df.columns:
+        n = str(c).lower()
+        if any(k in n for k in ("puntaje", "simce", "ensayo")) and c != "NOMBRE ESTUDIANTE":
+            return c
+    for c in df.columns:
+        if c != "NOMBRE ESTUDIANTE" and pd.api.types.is_numeric_dtype(df[c]):
+            return c
     return None
 
 # ===================================================
@@ -399,14 +402,19 @@ if uploaded_file and uploaded_consolidado:
 
             # Unir por clave normalizada (solo traemos la nota)
             df_merge = df_cons.merge(
-                df_new[["__key", "SIMCE 1"]], on="__key", how="left"
+                df_new[["__key", col_puntaje_new]], on="__key", how="left"
             )
 
-            # Crear la nueva columna con tipo numérico
-            df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
+            # Renombrar la columna detectada a un nombre estándar
+            df_merge.rename(columns={col_puntaje_new: "SIMCE Nuevo"}, inplace=True)
 
-            # Eliminar TODAS las columnas auxiliares que podrían colarse al final
-            df_merge.drop(columns=["__key", "SIMCE 1"], inplace=True, errors="ignore")
+            # Convertir a numérico
+            df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE Nuevo"], errors="coerce")
+
+            # Eliminar columnas auxiliares
+            df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
+            if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
+                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True, errors="ignore")
             # MUY IMPORTANTE: no dejar la "NOMBRE ESTUDIANTE" del lado derecho del merge
             if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
                 df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
