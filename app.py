@@ -220,15 +220,15 @@ if uploaded_file:
 
 # ================================
 # 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES
-#    (match robusto + nombre "Puntaje Ensayo n" + sin __tokens_new)
+# (match robusto + nombre "Puntaje Ensayo n" + sin columnas auxiliares)
 # ================================
 from io import BytesIO
 import unicodedata, re, numpy as np
 
-st.header("📂 Consolidación de puntajes (robusta)")
+st.header("📂 Consolidación de puntajes (emparejo robusto)")
 
 # ---- utilidades ----
-_STOP = {"de", "del", "la", "las", "los", "y", "e", "da", "do", "das", "dos"}
+_STOP = {"de","del","la","las","los","y","e","da","do","das","dos"}
 
 def _norm_text(s: str) -> str:
     if s is None:
@@ -249,9 +249,8 @@ def _bow_key(tokens: set) -> str:
 def _jaccard(a: set, b: set) -> float:
     if not a and not b: return 1.0
     if not a or not b:  return 0.0
-    inter = len(a & b)
-    union = len(a | b)
-    return inter / union if union else 0.0
+    inter = len(a & b); union = len(a | b)
+    return inter/union if union else 0.0
 
 def _next_ensayo_col(df_cons: pd.DataFrame, col_nombres: str) -> str:
     nums = []
@@ -265,7 +264,7 @@ def _next_ensayo_col(df_cons: pd.DataFrame, col_nombres: str) -> str:
     else:
         cand = [c for c in df_cons.columns
                 if c != col_nombres and re.search(r"(?i)(simce|puntaje|ensayo)", str(c))]
-        n = max(2, len(cand) + 1)
+        n = max(2, len(cand)+1)
     name = f"Puntaje Ensayo {n}"
     while name in df_cons.columns:
         n += 1
@@ -274,14 +273,12 @@ def _next_ensayo_col(df_cons: pd.DataFrame, col_nombres: str) -> str:
 
 uploaded_consolidado = st.file_uploader(
     "Sube el archivo consolidado anterior (todas las hojas de cursos)",
-    type=["xlsx"],
-    key="consolidado_robusto_b"
+    type=["xlsx"], key="consolidado_robusto_final"
 )
 
 if uploaded_file and uploaded_consolidado:
-    # archivo complejo (Función 1) + consolidado base
-    xls_comp = pd.ExcelFile(uploaded_file)
-    xls_cons = pd.ExcelFile(uploaded_consolidado)
+    xls_comp = pd.ExcelFile(uploaded_file)        # archivo complejo (Función 1)
+    xls_cons = pd.ExcelFile(uploaded_consolidado) # consolidado base
 
     resumen = []
     output_consol = BytesIO()
@@ -303,7 +300,7 @@ if uploaded_file and uploaded_consolidado:
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # extraer puntajes nuevos para esta hoja desde el archivo complejo
+            # extraer puntajes nuevos desde el archivo complejo (tu extractor)
             try:
                 df_raw = pd.read_excel(xls_comp, sheet_name=hoja, header=None)
                 df_new = extraer_datos(df_raw) if 'extraer_datos' in globals() else None
@@ -315,7 +312,7 @@ if uploaded_file and uploaded_consolidado:
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # ---- claves robustas por bolsa de tokens ----
+            # ---- claves robustas ----
             df_cons["__tokens"] = df_cons[col_nombres].map(_tokens)
             df_cons["__key"]    = df_cons["__tokens"].map(_bow_key)
 
@@ -324,39 +321,52 @@ if uploaded_file and uploaded_consolidado:
             df_new["__key"]     = df_new["__tokens"].map(_bow_key)
             df_new["SIMCE 1"]   = pd.to_numeric(df_new["SIMCE 1"], errors="coerce")
 
-            # 1) merge PRINCIPAL SIN traer __tokens del lado derecho (=> NO habrá __tokens_new)
-            df_merge = df_cons.merge(df_new[["__key", "SIMCE 1"]], on="__key", how="left")
-            # re-anexamos los tokens del consolidado para el fallback (solo del lado izquierdo)
-            df_merge["__tokens"] = df_cons["__tokens"].values
+            # 1) merge por clave BOW (no traemos __tokens del lado derecho)
+            df_merge = df_cons.merge(df_new[["__key","SIMCE 1"]], on="__key", how="left")
+            df_merge["__tokens"] = df_cons["__tokens"].values  # conservar tokens izq. para fallback
 
-            # 2) Fallback Jaccard para filas sin match
+            # 2) FALLBACK ampliado para filas sin match
             no_match_idx = df_merge.index[df_merge["SIMCE 1"].isna()].tolist()
-            candidates = list(df_new[["__tokens", "SIMCE 1"]].itertuples(index=False, name=None))
-            used = set()
+            candidates = list(df_new[["__tokens","SIMCE 1"]].itertuples(index=False, name=None))
+
             for idx in no_match_idx:
                 toks_cons = df_merge.at[idx, "__tokens"]
-                best_sim, best_val, best_j = 0.0, np.nan, -1
-                for j, (toks_new, val) in enumerate(candidates):
-                    if j in used: 
+                if not toks_cons:
+                    continue
+
+                best_sim, best_val = 0.0, np.nan
+
+                # 2.a Regla de subconjunto (≥2 tokens)
+                for toks_new, val in candidates:
+                    if not toks_new: 
                         continue
-                    sim = _jaccard(toks_cons, toks_new)
-                    if sim > best_sim:
-                        best_sim, best_val, best_j = sim, val, j
-                if (best_sim >= 0.75) or (len(toks_cons) >= 2 and best_sim >= 0.66):
+                    small, large = (toks_cons, toks_new) if len(toks_cons) <= len(toks_new) else (toks_new, toks_cons)
+                    if len(small) >= 2 and small.issubset(large):
+                        best_sim, best_val = 1.0, val  # match fuerte
+                        break
+
+                # 2.b Jaccard permisivo si no hubo subconjunto
+                if np.isnan(best_val):
+                    for toks_new, val in candidates:
+                        if not toks_new: 
+                            continue
+                        sim = _jaccard(toks_cons, toks_new)
+                        inter = len(toks_cons & toks_new)
+                        if inter >= 2 and sim > best_sim and sim >= 0.60:
+                            best_sim, best_val = sim, val
+
+                if not np.isnan(best_val):
                     df_merge.at[idx, "SIMCE 1"] = best_val
-                    used.add(best_j)
 
             # 3) crear nueva columna 'Puntaje Ensayo n'
             nueva_col = _next_ensayo_col(df_cons, col_nombres)
             df_merge[nueva_col] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
 
-            # 4) limpiar auxiliares (NO quedará __tokens_new)
-            df_merge.drop(
-                columns=["__key", "__tokens", "SIMCE 1", "NOMBRE ESTUDIANTE_new", "__tokens_new"],
-                inplace=True, errors="ignore"
-            )
+            # 4) limpiar auxiliares
+            df_merge.drop(columns=["__key","__tokens","SIMCE 1","NOMBRE ESTUDIANTE_new","__tokens_new"],
+                          inplace=True, errors="ignore")
 
-            # 5) resumen y escritura
+            # 5) resumen y escritura (se escriben TODAS las filas)
             coinc = int(df_merge[nueva_col].notna().sum())
             sinco = int(df_merge[nueva_col].isna().sum())
             resumen.append({"Hoja": hoja, "Coincidencias": coinc, "Sin coincidencia": sinco, "Nueva columna": nueva_col})
@@ -374,7 +384,7 @@ if uploaded_file and uploaded_consolidado:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # reusar en funciones 4/5/6 sin volver a subir
+    # reutilizar en funciones 4/5/6
     output_consol.seek(0)
     st.session_state["consolidado_xls"] = pd.ExcelFile(output_consol)
 
