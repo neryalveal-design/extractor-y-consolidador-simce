@@ -35,17 +35,9 @@ def extraer_datos(
 ):
     """
     Extrae nombres y puntajes desde una hoja del archivo complejo (layout tipo SIMCE).
-
     Devuelve DataFrame con:
       - 'NOMBRE ESTUDIANTE'
       - 'SIMCE 1' (float)
-
-    Características:
-      - No se corta al primer vacío: recorre 11..56.
-      - Detecta columnas por encabezado ('nombre' y 'estudiante'; 'puntaje' y 'simce').
-      - Fallback de puntajes: elige la columna con más dígitos si no hay 'PUNTAJE SIMCE'.
-      - Filtra filas que no son estudiantes (CORRECTAS, A/B/C/D/E).
-      - Convierte puntajes a número (soporta '1.234,56', '269,5652174', 'o'/'O' como omisión).
     """
     import numpy as np
     import pandas as pd
@@ -66,40 +58,36 @@ def extraer_datos(
 
     # ---------- 2) Serie de nombres ----------
     nombres = sub.iloc[:, col_name].astype(str).str.strip()
-
-    # Invalidaciones típicas (no son estudiantes)
     invalid = {"", "nan", "nombre estudiante", "curso", "correctas", "a", "b", "c", "d", "e"}
     mask_valid = ~nombres.str.lower().isin(invalid)
     nombres = nombres[mask_valid]
 
     # ---------- 3) Detectar/limpiar puntajes ----------
     if col_score is None:
-        # Fallback: elegir la columna con más celdas que contengan dígitos
         best_col, best_hits = None, -1
         for j in range(sub.shape[1]):
             s = sub.iloc[:, j].astype(str).str.strip()
             hits = s.str.contains(r"\d", regex=True, na=False).sum()
             if int(hits) > best_hits:
-                best_hits = int(hits); best_col = j
+                best_hits = int(hits)
+                best_col = j
         col_score = best_col
 
     puntajes_raw = sub.iloc[:, col_score].astype(str).str.strip()
-
-    # Normalización robusta
     puntajes_raw = puntajes_raw.str.replace("\u00a0", " ", regex=False)   # NBSP -> espacio
     puntajes_raw = puntajes_raw.replace({'^[oO-]$': ''}, regex=True)      # 'o', 'O' o '-' -> vacío
     puntajes_raw = puntajes_raw.str.replace(r"[^0-9\.,\-]+", "", regex=True)  # dejar solo dígitos/.,-
 
     def _to_num_str(s: str) -> str:
-        if s is None: return ""
+        if s is None:
+            return ""
         s = s.strip()
-        if s == "": return ""
-        # Estilo EU: 1.234,56 -> 1234.56
+        if s == "":
+            return ""
         if "." in s and "," in s:
-            s = s.replace(".", "").replace(",", ".")
+            s = s.replace(".", "").replace(",", ".")   # 1.234,56 -> 1234.56
         elif "," in s and "." not in s:
-            s = s.replace(",", ".")
-        # si quedan varios puntos, dejar solo el primero como decimal
+            s = s.replace(",", ".")                    # 269,56 -> 269.56
         if s.count(".") > 1:
             first = s.find(".")
             s = s[:first+1] + s[first+1:].replace(".", "")
@@ -107,55 +95,16 @@ def extraer_datos(
 
     puntajes_norm = puntajes_raw.apply(_to_num_str)
     puntajes = pd.to_numeric(puntajes_norm, errors="coerce")
-
-    # Alinear con filas válidas de nombre
     puntajes = puntajes[mask_valid]
 
-    # ---------- 4) Construir salida ----------
+    # ---------- 4) Salida ----------
     out = pd.DataFrame({
         "NOMBRE ESTUDIANTE": nombres.str.replace(r"\s+", " ", regex=True).str.strip().values,
         "SIMCE 1": puntajes.values
     })
-
-    # Quitar filas sin nombre real
     out = out[out["NOMBRE ESTUDIANTE"] != ""].reset_index(drop=True)
     return out
 
-    except Exception as e:
-        st.error(f"Error procesando el archivo: {e}")
-        return None
-
-uploaded_file = st.file_uploader("Sube un archivo Excel", type=["xlsx"])
-
-if uploaded_file:
-    xls = pd.ExcelFile(uploaded_file)
-    hojas_validas = xls.sheet_names
-
-    st.write("Hojas detectadas:", hojas_validas)
-
-    for hoja in hojas_validas:
-        st.subheader(f"Procesando hoja: {hoja}")
-        df = pd.read_excel(xls, sheet_name=hoja, header=None)
-
-        df_extraido = extraer_datos(df)
-
-        if df_extraido is not None:
-            st.write("Vista previa de datos extraídos:")
-            st.dataframe(df_extraido)
-
-            # Generar archivo descargable
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_extraido.to_excel(writer, index=False, sheet_name='Resultados')
-                worksheet = writer.sheets['Resultados']
-                worksheet.write('A1', 'NOMBRE ESTUDIANTE')
-                worksheet.write('B1', 'SIMCE 1')
-            st.download_button(
-                label=f"📥 Descargar resultados hoja {hoja}",
-                data=output.getvalue(),
-                file_name=f"resultados_{hoja}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
             
     # 🔄 Crear archivo combinado con todas las hojas de curso
     st.subheader("📦 Exportar todas las hojas a un único Excel normalizado")
