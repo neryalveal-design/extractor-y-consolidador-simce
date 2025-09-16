@@ -26,38 +26,101 @@ with col3:
 
 st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE")
 
-def extraer_datos(df):
-    try:
-        # Usar fila 10 como encabezado
-        raw_columns = df.iloc[9]
-        df = df[10:].reset_index(drop=True)
+def extraer_datos(
+    df_raw,
+    fila_encabezado: int = 9,   # fila 10 (1-based) -> índice 9
+    fila_ini: int = 10,         # fila 11 (1-based) -> índice 10
+    fila_fin: int = 56,         # EXCLUSIVO; procesa hasta fila 56 (1-based)
+    fallback_nombre_col: int = 2  # si no encuentra "NOMBRE ESTUDIANTE", usa columna C (índice 2)
+):
+    """
+    Extrae nombres y puntajes desde una hoja del archivo complejo (layout tipo SIMCE).
 
-        # Normalizar encabezados
-        normalized = raw_columns.astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
-        df.columns = normalized
+    Devuelve DataFrame con:
+      - 'NOMBRE ESTUDIANTE'
+      - 'SIMCE 1' (float)
 
-        # Detectar índices
-        idx_nombre = next((i for i, col in enumerate(normalized) if "nombre estudiante" in col), None)
-        idx_puntaje = next((i for i, col in enumerate(normalized) if "puntaje simce" in col), None)
+    Características:
+      - No se corta al primer vacío: recorre 11..56.
+      - Detecta columnas por encabezado ('nombre' y 'estudiante'; 'puntaje' y 'simce').
+      - Fallback de puntajes: elige la columna con más dígitos si no hay 'PUNTAJE SIMCE'.
+      - Filtra filas que no son estudiantes (CORRECTAS, A/B/C/D/E).
+      - Convierte puntajes a número (soporta '1.234,56', '269,5652174', 'o'/'O' como omisión).
+    """
+    import numpy as np
+    import pandas as pd
+    import re
 
-        if idx_nombre is None or idx_puntaje is None:
-            st.error("No se detectaron columnas válidas de nombres o puntajes.")
-            return None
+    # ---------- 1) Encabezados ----------
+    headers = df_raw.iloc[fila_encabezado].astype(str).str.lower().fillna("")
+    # Columna de nombres
+    cand_name_cols = [i for i, v in enumerate(headers) if ("nombre" in v and "estudiante" in v)]
+    col_name = cand_name_cols[0] if cand_name_cols else fallback_nombre_col
 
-        # Extraer datos
-        nombres = df.iloc[:, idx_nombre].dropna().astype(str).tolist()
-        puntajes = df.iloc[:, idx_puntaje].dropna().astype(str).tolist()
+    # Columna de puntajes
+    cand_score_cols = [i for i, v in enumerate(headers) if ("puntaje" in v and "simce" in v)]
+    col_score = cand_score_cols[0] if cand_score_cols else None
 
-        # Sincronizar longitudes
-        min_len = min(len(nombres), len(puntajes))
-        nombres = nombres[:min_len]
-        puntajes = puntajes[:min_len]
+    # Submatriz de estudiantes (D11:BP56 aprox.)
+    sub = df_raw.iloc[fila_ini:fila_fin].copy()
 
-        # Crear DataFrame limpio
-        df_limpio = pd.DataFrame({
-            "NOMBRE ESTUDIANTE": nombres,
-            "SIMCE 1": puntajes
-        })
+    # ---------- 2) Serie de nombres ----------
+    nombres = sub.iloc[:, col_name].astype(str).str.strip()
+
+    # Invalidaciones típicas (no son estudiantes)
+    invalid = {"", "nan", "nombre estudiante", "curso", "correctas", "a", "b", "c", "d", "e"}
+    mask_valid = ~nombres.str.lower().isin(invalid)
+    nombres = nombres[mask_valid]
+
+    # ---------- 3) Detectar/limpiar puntajes ----------
+    if col_score is None:
+        # Fallback: elegir la columna con más celdas que contengan dígitos
+        best_col, best_hits = None, -1
+        for j in range(sub.shape[1]):
+            s = sub.iloc[:, j].astype(str).str.strip()
+            hits = s.str.contains(r"\d", regex=True, na=False).sum()
+            if int(hits) > best_hits:
+                best_hits = int(hits); best_col = j
+        col_score = best_col
+
+    puntajes_raw = sub.iloc[:, col_score].astype(str).str.strip()
+
+    # Normalización robusta
+    puntajes_raw = puntajes_raw.str.replace("\u00a0", " ", regex=False)   # NBSP -> espacio
+    puntajes_raw = puntajes_raw.replace({'^[oO-]$': ''}, regex=True)      # 'o', 'O' o '-' -> vacío
+    puntajes_raw = puntajes_raw.str.replace(r"[^0-9\.,\-]+", "", regex=True)  # dejar solo dígitos/.,-
+
+    def _to_num_str(s: str) -> str:
+        if s is None: return ""
+        s = s.strip()
+        if s == "": return ""
+        # Estilo EU: 1.234,56 -> 1234.56
+        if "." in s and "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s and "." not in s:
+            s = s.replace(",", ".")
+        # si quedan varios puntos, dejar solo el primero como decimal
+        if s.count(".") > 1:
+            first = s.find(".")
+            s = s[:first+1] + s[first+1:].replace(".", "")
+        return s
+
+    puntajes_norm = puntajes_raw.apply(_to_num_str)
+    puntajes = pd.to_numeric(puntajes_norm, errors="coerce")
+
+    # Alinear con filas válidas de nombre
+    puntajes = puntajes[mask_valid]
+
+    # ---------- 4) Construir salida ----------
+    out = pd.DataFrame({
+        "NOMBRE ESTUDIANTE": nombres.str.replace(r"\s+", " ", regex=True).str.strip().values,
+        "SIMCE 1": puntajes.values
+    })
+
+    # Quitar filas sin nombre real
+    out = out[out["NOMBRE ESTUDIANTE"] != ""].reset_index(drop=True)
+    return out
+
 
         return df_limpio
 
