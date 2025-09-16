@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 from io import BytesIO
@@ -26,86 +25,77 @@ with col3:
 
 st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE")
 
-def extraer_datos(
-    df_raw,
-    fila_encabezado: int = 9,   # fila 10 (1-based) -> índice 9
-    fila_ini: int = 10,         # fila 11 (1-based) -> índice 10
-    fila_fin: int = 56,         # EXCLUSIVO; procesa hasta fila 56 (1-based)
-    fallback_nombre_col: int = 2  # si no encuentra "NOMBRE ESTUDIANTE", usa columna C (índice 2)
-):
-    """
-    Extrae nombres y puntajes desde una hoja del archivo complejo (layout tipo SIMCE).
-    Devuelve DataFrame con:
-      - 'NOMBRE ESTUDIANTE'
-      - 'SIMCE 1' (float)
-    """
-    import numpy as np
-    import pandas as pd
-    import re
+def extraer_datos(df):
+    try:
+        # Usar fila 10 como encabezado
+        raw_columns = df.iloc[9]
+        df = df[10:].reset_index(drop=True)
 
-    # ---------- 1) Encabezados ----------
-    headers = df_raw.iloc[fila_encabezado].astype(str).str.lower().fillna("")
-    # Columna de nombres
-    cand_name_cols = [i for i, v in enumerate(headers) if ("nombre" in v and "estudiante" in v)]
-    col_name = cand_name_cols[0] if cand_name_cols else fallback_nombre_col
+        # Normalizar encabezados
+        normalized = raw_columns.astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+        df.columns = normalized
 
-    # Columna de puntajes
-    cand_score_cols = [i for i, v in enumerate(headers) if ("puntaje" in v and "simce" in v)]
-    col_score = cand_score_cols[0] if cand_score_cols else None
+        # Detectar índices
+        idx_nombre = next((i for i, col in enumerate(normalized) if "nombre estudiante" in col), None)
+        idx_puntaje = next((i for i, col in enumerate(normalized) if "puntaje simce" in col), None)
 
-    # Submatriz de estudiantes (D11:BP56 aprox.)
-    sub = df_raw.iloc[fila_ini:fila_fin].copy()
+        if idx_nombre is None or idx_puntaje is None:
+            st.error("No se detectaron columnas válidas de nombres o puntajes.")
+            return None
 
-    # ---------- 2) Serie de nombres ----------
-    nombres = sub.iloc[:, col_name].astype(str).str.strip()
-    invalid = {"", "nan", "nombre estudiante", "curso", "correctas", "a", "b", "c", "d", "e"}
-    mask_valid = ~nombres.str.lower().isin(invalid)
-    nombres = nombres[mask_valid]
+        # Extraer datos
+        nombres = df.iloc[:, idx_nombre].dropna().astype(str).tolist()
+        puntajes = df.iloc[:, idx_puntaje].dropna().astype(str).tolist()
 
-    # ---------- 3) Detectar/limpiar puntajes ----------
-    if col_score is None:
-        best_col, best_hits = None, -1
-        for j in range(sub.shape[1]):
-            s = sub.iloc[:, j].astype(str).str.strip()
-            hits = s.str.contains(r"\d", regex=True, na=False).sum()
-            if int(hits) > best_hits:
-                best_hits = int(hits)
-                best_col = j
-        col_score = best_col
+        # Sincronizar longitudes
+        min_len = min(len(nombres), len(puntajes))
+        nombres = nombres[:min_len]
+        puntajes = puntajes[:min_len]
 
-    puntajes_raw = sub.iloc[:, col_score].astype(str).str.strip()
-    puntajes_raw = puntajes_raw.str.replace("\u00a0", " ", regex=False)   # NBSP -> espacio
-    puntajes_raw = puntajes_raw.replace({'^[oO-]$': ''}, regex=True)      # 'o', 'O' o '-' -> vacío
-    puntajes_raw = puntajes_raw.str.replace(r"[^0-9\.,\-]+", "", regex=True)  # dejar solo dígitos/.,-
+        # Crear DataFrame limpio
+        df_limpio = pd.DataFrame({
+            "NOMBRE ESTUDIANTE": nombres,
+            "SIMCE 1": puntajes
+        })
 
-    def _to_num_str(s: str) -> str:
-        if s is None:
-            return ""
-        s = s.strip()
-        if s == "":
-            return ""
-        if "." in s and "," in s:
-            s = s.replace(".", "").replace(",", ".")   # 1.234,56 -> 1234.56
-        elif "," in s and "." not in s:
-            s = s.replace(",", ".")                    # 269,56 -> 269.56
-        if s.count(".") > 1:
-            first = s.find(".")
-            s = s[:first+1] + s[first+1:].replace(".", "")
-        return s
+        return df_limpio
 
-    puntajes_norm = puntajes_raw.apply(_to_num_str)
-    puntajes = pd.to_numeric(puntajes_norm, errors="coerce")
-    puntajes = puntajes[mask_valid]
+    except Exception as e:
+        st.error(f"Error procesando el archivo: {e}")
+        return None
 
-    # ---------- 4) Salida ----------
-    out = pd.DataFrame({
-        "NOMBRE ESTUDIANTE": nombres.str.replace(r"\s+", " ", regex=True).str.strip().values,
-        "SIMCE 1": puntajes.values
-    })
-    out = out[out["NOMBRE ESTUDIANTE"] != ""].reset_index(drop=True)
-    return out
+uploaded_file = st.file_uploader("Sube un archivo Excel", type=["xlsx"])
 
-            
+if uploaded_file:
+    xls = pd.ExcelFile(uploaded_file)
+    hojas_validas = xls.sheet_names
+
+    st.write("Hojas detectadas:", hojas_validas)
+
+    for hoja in hojas_validas:
+        st.subheader(f"Procesando hoja: {hoja}")
+        df = pd.read_excel(xls, sheet_name=hoja, header=None)
+
+        df_extraido = extraer_datos(df)
+
+        if df_extraido is not None:
+            st.write("Vista previa de datos extraídos:")
+            st.dataframe(df_extraido)
+
+            # Generar archivo descargable
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_extraido.to_excel(writer, index=False, sheet_name='Resultados')
+                worksheet = writer.sheets['Resultados']
+                worksheet.write('A1', 'NOMBRE ESTUDIANTE')
+                worksheet.write('B1', 'SIMCE 1')
+            st.download_button(
+                label=f"📥 Descargar resultados hoja {hoja}",
+                data=output.getvalue(),
+                file_name=f"resultados_{hoja}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
     # 🔄 Crear archivo combinado con todas las hojas de curso
     st.subheader("📦 Exportar todas las hojas a un único Excel normalizado")
 
@@ -229,14 +219,17 @@ if uploaded_file:
 
 # ================================
 # 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES
+#    (match robusto + nombre "Puntaje Ensayo n" + sin __tokens_new)
 # (match robusto + nombre "Puntaje Ensayo n" + sin columnas auxiliares)
 # ================================
 from io import BytesIO
 import unicodedata, re, numpy as np
 
+st.header("📂 Consolidación de puntajes (robusta)")
 st.header("📂 Consolidación de puntajes (emparejo robusto)")
 
 # ---- utilidades ----
+_STOP = {"de", "del", "la", "las", "los", "y", "e", "da", "do", "das", "dos"}
 _STOP = {"de","del","la","las","los","y","e","da","do","das","dos"}
 
 def _norm_text(s: str) -> str:
@@ -258,6 +251,9 @@ def _bow_key(tokens: set) -> str:
 def _jaccard(a: set, b: set) -> float:
     if not a and not b: return 1.0
     if not a or not b:  return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
     inter = len(a & b); union = len(a | b)
     return inter/union if union else 0.0
 
@@ -273,6 +269,7 @@ def _next_ensayo_col(df_cons: pd.DataFrame, col_nombres: str) -> str:
     else:
         cand = [c for c in df_cons.columns
                 if c != col_nombres and re.search(r"(?i)(simce|puntaje|ensayo)", str(c))]
+        n = max(2, len(cand) + 1)
         n = max(2, len(cand)+1)
     name = f"Puntaje Ensayo {n}"
     while name in df_cons.columns:
@@ -282,10 +279,15 @@ def _next_ensayo_col(df_cons: pd.DataFrame, col_nombres: str) -> str:
 
 uploaded_consolidado = st.file_uploader(
     "Sube el archivo consolidado anterior (todas las hojas de cursos)",
+    type=["xlsx"],
+    key="consolidado_robusto_b"
     type=["xlsx"], key="consolidado_robusto_final"
 )
 
 if uploaded_file and uploaded_consolidado:
+    # archivo complejo (Función 1) + consolidado base
+    xls_comp = pd.ExcelFile(uploaded_file)
+    xls_cons = pd.ExcelFile(uploaded_consolidado)
     xls_comp = pd.ExcelFile(uploaded_file)        # archivo complejo (Función 1)
     xls_cons = pd.ExcelFile(uploaded_consolidado) # consolidado base
 
@@ -309,6 +311,7 @@ if uploaded_file and uploaded_consolidado:
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
+            # extraer puntajes nuevos para esta hoja desde el archivo complejo
             # extraer puntajes nuevos desde el archivo complejo (tu extractor)
             try:
                 df_raw = pd.read_excel(xls_comp, sheet_name=hoja, header=None)
@@ -321,6 +324,7 @@ if uploaded_file and uploaded_consolidado:
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
+            # ---- claves robustas por bolsa de tokens ----
             # ---- claves robustas ----
             df_cons["__tokens"] = df_cons[col_nombres].map(_tokens)
             df_cons["__key"]    = df_cons["__tokens"].map(_bow_key)
@@ -330,16 +334,26 @@ if uploaded_file and uploaded_consolidado:
             df_new["__key"]     = df_new["__tokens"].map(_bow_key)
             df_new["SIMCE 1"]   = pd.to_numeric(df_new["SIMCE 1"], errors="coerce")
 
+            # 1) merge PRINCIPAL SIN traer __tokens del lado derecho (=> NO habrá __tokens_new)
+            df_merge = df_cons.merge(df_new[["__key", "SIMCE 1"]], on="__key", how="left")
+            # re-anexamos los tokens del consolidado para el fallback (solo del lado izquierdo)
+            df_merge["__tokens"] = df_cons["__tokens"].values
             # 1) merge por clave BOW (no traemos __tokens del lado derecho)
             df_merge = df_cons.merge(df_new[["__key","SIMCE 1"]], on="__key", how="left")
             df_merge["__tokens"] = df_cons["__tokens"].values  # conservar tokens izq. para fallback
 
+            # 2) Fallback Jaccard para filas sin match
             # 2) FALLBACK ampliado para filas sin match
             no_match_idx = df_merge.index[df_merge["SIMCE 1"].isna()].tolist()
+            candidates = list(df_new[["__tokens", "SIMCE 1"]].itertuples(index=False, name=None))
+            used = set()
             candidates = list(df_new[["__tokens","SIMCE 1"]].itertuples(index=False, name=None))
 
             for idx in no_match_idx:
                 toks_cons = df_merge.at[idx, "__tokens"]
+                best_sim, best_val, best_j = 0.0, np.nan, -1
+                for j, (toks_new, val) in enumerate(candidates):
+                    if j in used: 
                 if not toks_cons:
                     continue
 
@@ -349,6 +363,10 @@ if uploaded_file and uploaded_consolidado:
                 for toks_new, val in candidates:
                     if not toks_new: 
                         continue
+                    sim = _jaccard(toks_cons, toks_new)
+                    if sim > best_sim:
+                        best_sim, best_val, best_j = sim, val, j
+                if (best_sim >= 0.75) or (len(toks_cons) >= 2 and best_sim >= 0.66):
                     small, large = (toks_cons, toks_new) if len(toks_cons) <= len(toks_new) else (toks_new, toks_cons)
                     if len(small) >= 2 and small.issubset(large):
                         best_sim, best_val = 1.0, val  # match fuerte
@@ -366,15 +384,22 @@ if uploaded_file and uploaded_consolidado:
 
                 if not np.isnan(best_val):
                     df_merge.at[idx, "SIMCE 1"] = best_val
+                    used.add(best_j)
 
             # 3) crear nueva columna 'Puntaje Ensayo n'
             nueva_col = _next_ensayo_col(df_cons, col_nombres)
             df_merge[nueva_col] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
 
+            # 4) limpiar auxiliares (NO quedará __tokens_new)
+            df_merge.drop(
+                columns=["__key", "__tokens", "SIMCE 1", "NOMBRE ESTUDIANTE_new", "__tokens_new"],
+                inplace=True, errors="ignore"
+            )
             # 4) limpiar auxiliares
             df_merge.drop(columns=["__key","__tokens","SIMCE 1","NOMBRE ESTUDIANTE_new","__tokens_new"],
                           inplace=True, errors="ignore")
 
+            # 5) resumen y escritura
             # 5) resumen y escritura (se escriben TODAS las filas)
             coinc = int(df_merge[nueva_col].notna().sum())
             sinco = int(df_merge[nueva_col].isna().sum())
@@ -393,6 +418,7 @@ if uploaded_file and uploaded_consolidado:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+    # reusar en funciones 4/5/6 sin volver a subir
     # reutilizar en funciones 4/5/6
     output_consol.seek(0)
     st.session_state["consolidado_xls"] = pd.ExcelFile(output_consol)
@@ -625,4 +651,4 @@ if uploaded_file:  # usamos el archivo ya cargado en la función 1
     st.pyplot(fig)
 else:
     st.info("⚠️ Primero debes subir un archivo en la sección 'EXTRAER PUNTAJES'.")
-
+~
