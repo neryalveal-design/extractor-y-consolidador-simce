@@ -324,11 +324,10 @@ elif uploaded_consolidado and not uploaded_file:
 
 
 # ================================
-# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (robusta a columnas texto)
+# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (final, robusta y sin re-subir archivos)
 # ================================
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
 st.header("🎯 Análisis por estudiante")
 
@@ -340,8 +339,7 @@ else:
     hojas_est = xls_est.sheet_names
 
     # Selección de curso (hoja)
-    curso_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_est)
-
+    curso_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_est, key="f4_curso_sel")
     df_curso = pd.read_excel(xls_est, sheet_name=curso_sel)
 
     # Detectar columna de nombres
@@ -355,73 +353,69 @@ else:
         st.error("No se encontró una columna de nombres de estudiantes en esta hoja.")
     else:
         # Selección de estudiante
-        estudiante_sel = st.selectbox("Elige un estudiante", df_curso[col_nombres].dropna().unique())
+        estudiantes_opciones = df_curso[col_nombres].dropna().unique()
+        estudiante_sel = st.selectbox("Elige un estudiante", estudiantes_opciones, key="f4_estudiante_sel")
 
         # Fila del estudiante
         df_est = df_curso[df_curso[col_nombres] == estudiante_sel].copy()
-
-        # Detectar columnas de puntajes (numéricas o con keywords)
-        cols_puntajes = [
-            c for c in df_est.columns
-            if c != col_nombres and pd.api.types.is_numeric_dtype(df_est[c])
-        ]
-        for c in df_est.columns:
-            if c != col_nombres and ("simce" in str(c).lower() or "puntaje" in str(c).lower()):
-                if c not in cols_puntajes:
+        if df_est.empty:
+            st.info("No se encontró información para el estudiante seleccionado.")
+        else:
+            # Detectar posibles columnas de puntajes conservando el orden original de la hoja
+            cols_puntajes = []
+            for c in df_est.columns:
+                if c == col_nombres:
+                    continue
+                serie = df_est[c]
+                is_num = pd.api.types.is_numeric_dtype(serie)
+                has_kw = ("simce" in str(c).lower()) or ("puntaje" in str(c).lower())
+                if is_num or has_kw:
                     cols_puntajes.append(c)
 
-        if not cols_puntajes:
-            st.warning("No se encontraron columnas de puntajes en esta hoja.")
-        else:
-            # Orden aproximado (por nombre)
-            cols_puntajes = sorted(cols_puntajes)
-
-            # --- Conversión robusta a numérico ---
-            row_raw = df_est[cols_puntajes].iloc[0]
-
-            def to_number(v):
-                if pd.isna(v):
-                    return np.nan
-                if isinstance(v, (int, float, np.number)):
-                    return pd.to_numeric(v, errors="coerce")
-                s = str(v).strip()
-                if s == "":
-                    return np.nan
-                # Quitar miles y normalizar coma decimal
-                s = s.replace(".", "")
-                s = s.replace(",", ".")
-                return pd.to_numeric(s, errors="coerce")
-
-            row_num = row_raw.apply(to_number)
-
-            mask = row_num.notna()
-            x = list(row_raw.index[mask])
-            y = list(row_num[mask].astype(float))
-
-            if not y:
-                st.info(f"No hay puntajes disponibles para {estudiante_sel}.")
+            if not cols_puntajes:
+                st.warning("No se encontraron columnas de puntajes en esta hoja.")
             else:
-                # Gráfico
-                fig, ax = plt.subplots(figsize=(7, 4))
-                ax.plot(range(len(x)), y, marker="o", linestyle="-")
+                # --- Conversión robusta a numérico (vectorizada, segura) ---
+                row_raw = df_est[cols_puntajes].iloc[0]
+                row_str = row_raw.astype(str).str.strip()
+                row_str = row_str.str.replace("\u00a0", " ", regex=False)   # NBSP -> espacio
+                row_str = row_str.str.replace(".", "", regex=False)         # quitar separador de miles
+                row_str = row_str.str.replace(",", ".", regex=False)        # coma decimal -> punto
+                row_str = row_str.where(row_str.ne(""), np.nan)
+                row_str = row_str.where(~row_str.str.contains("nan", case=False, na=False), np.nan)
+                row_num = pd.to_numeric(row_str, errors="coerce")
 
-                # Anotar valores (con desplazamiento seguro)
-                offset = (max(y) - min(y)) * 0.03 if len(y) > 1 else 5
-                for i, yi in enumerate(y):
-                    ax.text(i, yi + (offset if np.isfinite(yi) else 0), f"{int(round(yi))}", ha="center", fontsize=9)
+                mask = row_num.notna()
+                x_labels = list(row_num.index[mask])
+                y_vals = list(row_num[mask].astype(float))
 
-                ax.set_title(f"Evolución del rendimiento - {estudiante_sel} ({curso_sel})")
-                ax.set_ylabel("Puntaje")
-                ax.set_xlabel("Ensayos")
-                ax.grid(True)
-                ax.set_xticks(range(len(x)))
-                ax.set_xticklabels(x, fontsize=8, rotation=30)
+                if not y_vals:
+                    st.info(f"No hay puntajes disponibles para {estudiante_sel}.")
+                else:
+                    # Gráfico líneas + puntos
+                    fig, ax = plt.subplots(figsize=(7, 4))
+                    ax.plot(range(len(x_labels)), y_vals, marker="o", linestyle="-")
 
-                st.pyplot(fig)
+                    # Anotar valores con desplazamiento proporcional
+                    if len(y_vals) > 1:
+                        offset = (max(y_vals) - min(y_vals)) * 0.03
+                    else:
+                        offset = 5
+                    for i, yi in enumerate(y_vals):
+                        ax.text(i, yi + offset, f"{int(round(yi))}", ha="center", fontsize=9)
 
-                # Promedio (solo válidos)
-                promedio = float(np.nanmean(np.array(y, dtype=float)))
-                st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
+                    ax.set_title(f"Evolución del rendimiento - {estudiante_sel} ({curso_sel})")
+                    ax.set_ylabel("Puntaje")
+                    ax.set_xlabel("Ensayos")
+                    ax.grid(True)
+                    ax.set_xticks(range(len(x_labels)))
+                    ax.set_xticklabels(x_labels, fontsize=8, rotation=30)
+
+                    st.pyplot(fig)
+
+                    # Promedio (solo válidos)
+                    promedio = float(np.nanmean(np.array(y_vals, dtype=float)))
+                    st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
 
 # ================================
 # 📉 FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO
