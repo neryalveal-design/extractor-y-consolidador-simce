@@ -101,18 +101,15 @@ def _parse_numeric_series(series: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
 
 def _detectar_col_puntaje(df: pd.DataFrame):
-    """Devuelve el nombre de la columna de puntaje en un normalizado/consolidado."""
-    preferidas = ["Puntaje Ensayo 1", "SIMCE 1"]
-    for c in preferidas:
-        if c in df.columns:
-            return c
-    for c in df.columns:
-        n = str(c).lower()
-        if any(k in n for k in ("puntaje", "simce", "ensayo")) and c != "NOMBRE ESTUDIANTE":
-            return c
-    for c in df.columns:
-        if c != "NOMBRE ESTUDIANTE" and pd.api.types.is_numeric_dtype(df[c]):
-            return c
+    """Devuelve el nombre de la columna de puntaje en un normalizado o archivo complejo."""
+    preferidas = ["Puntaje Ensayo 1", "FK", "TOTAL"]
+    for col in df.columns:
+        if str(col).strip() in preferidas:
+            return col
+    # fallback: buscar nombres con "puntaje" o "simce"
+    for col in df.columns:
+        if "puntaje" in str(col).lower() or "simce" in str(col).lower():
+            return col
     return None
 
 # ===================================================
