@@ -402,14 +402,14 @@ if uploaded_file and uploaded_consolidado:
 
             # Unir por clave normalizada (solo traemos la nota)
             df_merge = df_cons.merge(
-                df_new[["__key", col_puntaje_new]], on="__key", how="left"
+                df_new[["__key", "SIMCE 1"]], on="__key", how="left"
             )
 
             # Crear la nueva columna con tipo numérico
             df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
 
             # Eliminar TODAS las columnas auxiliares que podrían colarse al final
-            df_merge.drop(columns=["__key", col_puntaje_new], inplace=True, errors="ignore")
+            df_merge.drop(columns=["__key", "SIMCE 1"], inplace=True, errors="ignore")
             # MUY IMPORTANTE: no dejar la "NOMBRE ESTUDIANTE" del lado derecho del merge
             if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
                 df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
