@@ -4,7 +4,6 @@
 # ===================================================
 
 import re
-import io
 import unicodedata
 from io import BytesIO
 
@@ -131,44 +130,56 @@ def extraer_datos(
     """
     Extrae nombres y puntajes desde una hoja del archivo complejo tipo SIMCE/Ensayo.
     Devuelve DataFrame con columnas ['NOMBRE ESTUDIANTE', 'Puntaje Ensayo 1'] (float).
+    Incluye un FALBACK fila-a-fila para puntajes faltantes.
     """
     headers = df_raw.iloc[fila_encabezado].astype(str).str.lower().fillna("")
 
-    # Columna de nombres
+    # --- Columna de nombres ---
     cand_name_cols = [i for i, v in enumerate(headers) if ("nombre" in v and "estudiante" in v)]
     col_name = cand_name_cols[0] if cand_name_cols else fallback_nombre_col
 
-    # Columna de puntaje (por encabezado)
+    # --- Columna de puntaje (por encabezado) ---
     cand_score_cols = [i for i, v in enumerate(headers)
                        if ("puntaje" in v and ("simce" in v or "ensayo" in v))]
     col_score = cand_score_cols[0] if cand_score_cols else None
 
-    # Rango de estudiantes
+    # --- Rango de estudiantes ---
     sub = df_raw.iloc[fila_ini:fila_fin].copy()
 
-    # Serie de nombres y filtro de válidos
+    # --- Nombres y filtro de válidos ---
     nombres = sub.iloc[:, col_name].astype(str).str.strip()
     invalid = {"", "nan", "nombre estudiante", "curso", "correctas", "a", "b", "c", "d", "e"}
     mask_valid = ~nombres.str.lower().isin(invalid)
-    nombres = nombres[mask_valid]
 
-    # Elegir la mejor columna de puntaje si no hay encabezado claro
+    # ---------- Utilidades numéricas ----------
+    def _to_num_str(s: str) -> str:
+        if s is None:
+            return ""
+        s = str(s).strip()
+        if s == "":
+            return ""
+        if "." in s and "," in s:
+            s = s.replace(".", "").replace(",", ".")   # 1.234,56 -> 1234.56
+        elif "," in s and "." not in s:
+            s = s.replace(",", ".")                    # 269,56 -> 269.56
+        if s.count(".") > 1:
+            first = s.find(".")
+            s = s[:first+1] + s[first+1:].replace(".", "")
+        return s
+
+    def _serie_to_num(sr: pd.Series) -> pd.Series:
+        sr = sr.astype(str).str.strip()
+        sr = sr.str.replace("\u00a0", " ", regex=False)
+        sr = sr.replace({'^[oO-]$': ''}, regex=True)      # 'o'/'O'/'-' -> omitida
+        sr = sr.str.replace(r"[^0-9\.,\-]+", "", regex=True)
+        sr = sr.apply(_to_num_str)
+        return pd.to_numeric(sr, errors="coerce")
+
+    # --- Elegir mejor columna de puntaje si no hay encabezado claro ---
     def _col_mas_numerica(df_slice):
         best_col, best_score = None, -1.0
         for j in range(df_slice.shape[1]):
-            s = df_slice.iloc[:, j].astype(str).str.strip()
-            s2 = s.str.replace("\u00a0", " ", regex=False)
-            s2 = s2.str.replace(r"[^0-9\.,\-]+", "", regex=True)
-            def _to_num_str(x):
-                if x == "" or pd.isna(x): return ""
-                x = str(x)
-                if "." in x and "," in x: x = x.replace(".", "").replace(",", ".")
-                elif "," in x and "." not in x: x = x.replace(",", ".")
-                if x.count(".") > 1:
-                    first = x.find("."); x = x[:first+1] + x[first+1:].replace(".", "")
-                return x
-            s3 = s2.apply(_to_num_str)
-            nums = pd.to_numeric(s3, errors="coerce")
+            nums = _serie_to_num(df_slice.iloc[:, j])
             valid = nums.between(0, 1000, inclusive="both")
             score = valid.mean()
             if score > best_score:
@@ -178,32 +189,42 @@ def extraer_datos(
     if col_score is None:
         col_score = _col_mas_numerica(sub)
 
-    # Normalización robusta de puntajes
-    puntajes_raw = sub.iloc[:, col_score].astype(str).str.strip()
-    puntajes_raw = puntajes_raw.str.replace("\u00a0", " ", regex=False)
-    puntajes_raw = puntajes_raw.replace({'^[oO-]$': ''}, regex=True)  # omitidas
-    puntajes_raw = puntajes_raw.str.replace(r"[^0-9\.,\-]+", "", regex=True)
+    # --- Lectura inicial de puntajes ---
+    puntajes = _serie_to_num(sub.iloc[:, col_score])
+    # Alinear con filas válidas de nombre
+    nombres_valid = nombres[mask_valid]
+    puntajes_valid = puntajes[mask_valid].copy()
 
-    def _to_num_str(s: str) -> str:
-        if s is None: return ""
-        s = s.strip()
-        if s == "": return ""
-        if "." in s and "," in s:
-            s = s.replace(".", "").replace(",", ".")
-        elif "," in s and "." not in s:
-            s = s.replace(",", ".")
-        if s.count(".") > 1:
-            first = s.find(".")
-            s = s[:first+1] + s[first+1:].replace(".", "")
-        return s
+    # --- Fallback fila-a-fila para faltantes ---
+    headers_full = headers
+    sub_valid = sub[mask_valid].copy()
 
-    puntajes_norm = puntajes_raw.apply(_to_num_str)
-    puntajes = pd.to_numeric(puntajes_norm, errors="coerce")
-    puntajes = puntajes[mask_valid]
+    def _mejor_puntaje_fila(row: pd.Series) -> float:
+        mejor = np.nan
+        mejor_desde_header = False
+        for j, cell in enumerate(row):
+            num = _serie_to_num(pd.Series([cell])).iloc[0]
+            if pd.isna(num) or not (100 <= num <= 1000):
+                continue
+            h = str(headers_full.iloc[j]).lower()
+            es_header_score = ("puntaje" in h) or ("simce" in h) or ("ensayo" in h)
+            if es_header_score:
+                mejor = num
+                mejor_desde_header = True
+            elif not mejor_desde_header:
+                if pd.isna(mejor) or num > mejor:
+                    mejor = num
+        return mejor
 
+    faltantes_idx = puntajes_valid.index[puntajes_valid.isna()]
+    if len(faltantes_idx) > 0:
+        fallback_series = sub_valid.apply(_mejor_puntaje_fila, axis=1)
+        puntajes_valid = puntajes_valid.combine_first(fallback_series)
+
+    # --- Salida ---
     out = pd.DataFrame({
-        "NOMBRE ESTUDIANTE": nombres.str.replace(r"\s+", " ", regex=True).str.strip().values,
-        "Puntaje Ensayo 1": puntajes.values
+        "NOMBRE ESTUDIANTE": nombres_valid.str.replace(r"\s+", " ", regex=True).str.strip().values,
+        "Puntaje Ensayo 1": puntajes_valid.values
     })
     out = out[out["NOMBRE ESTUDIANTE"] != ""].reset_index(drop=True)
     return out
