@@ -219,14 +219,15 @@ if uploaded_file:
         st.pyplot(fig_total)
 
 # ================================
-# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES (corregida: sin nombres en la última columna)
+# 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES (nombra "Puntaje Ensayo n")
 # ================================
 from io import BytesIO
-import unicodedata, re
+import re, unicodedata
 
-st.header("📂 Consolidación de puntajes")
+st.header("📂 Consolidación de puntajes (con nombre secuencial)")
 
 def _norm(s: str) -> str:
+    """Normaliza nombres para emparejar (minúsculas, sin tildes, sin dobles espacios)."""
     if s is None:
         return ""
     s = str(s).strip().lower().replace("\u00a0", " ")
@@ -235,14 +236,46 @@ def _norm(s: str) -> str:
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 
+def _siguiente_nombre_ensayo(df_cons: pd.DataFrame, col_nombres: str) -> str:
+    """
+    Determina el próximo nombre 'Puntaje Ensayo n' disponible en esta hoja.
+    - Busca existentes 'Puntaje Ensayo N' y toma el N máximo + 1.
+    - Si no hay, estima N como (# columnas de puntaje visibles) + 1.
+    - Garantiza unicidad del nombre.
+    """
+    # 1) Buscar 'Puntaje Ensayo n' existentes
+    existentes = []
+    for c in df_cons.columns:
+        m = re.match(r"(?i)puntaje\s+ensayo\s+(\d+)$", str(c).strip())
+        if m:
+            try:
+                existentes.append(int(m.group(1)))
+            except:
+                pass
+    if existentes:
+        next_n = max(existentes) + 1
+    else:
+        # 2) Aproximar cuántos ensayos hay según columnas "simce/puntaje/ensayo"
+        candidatos = [c for c in df_cons.columns
+                      if c != col_nombres and re.search(r"(?i)(simce|puntaje|ensayo)", str(c))]
+        next_n = max(2, len(candidatos) + 1)  # empieza en 2 si nada claro
+
+    nombre = f"Puntaje Ensayo {next_n}"
+    # 3) Garantizar unicidad por si acaso
+    while nombre in df_cons.columns:
+        next_n += 1
+        nombre = f"Puntaje Ensayo {next_n}"
+    return nombre
+
 uploaded_consolidado = st.file_uploader(
     "Sube el archivo consolidado anterior (todas las hojas de cursos)",
-    type=["xlsx"], key="consolidado_fix"
+    type=["xlsx"],
+    key="consolidado_secuencial"
 )
 
 if uploaded_file and uploaded_consolidado:
     xls_comp = pd.ExcelFile(uploaded_file)            # archivo complejo (Función 1)
-    xls_cons = pd.ExcelFile(uploaded_consolidado)     # consolidado histórico
+    xls_cons = pd.ExcelFile(uploaded_consolidado)     # consolidado histórico a actualizar
 
     resumen = []
     output_consol = BytesIO()
@@ -253,8 +286,8 @@ if uploaded_file and uploaded_consolidado:
             # Detectar columna de nombres en el consolidado
             col_nombres = None
             for col in df_cons.columns:
-                c = str(col).lower()
-                if "nombre" in c and "estudiante" in c:
+                cl = str(col).lower()
+                if "nombre" in cl and "estudiante" in cl:
                     col_nombres = col
                     break
 
@@ -264,7 +297,7 @@ if uploaded_file and uploaded_consolidado:
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # Intentar extraer para esta hoja los nuevos puntajes desde el archivo complejo
+            # Extraer puntajes nuevos para esta hoja desde el archivo complejo usando tu limpiador
             try:
                 df_raw = pd.read_excel(xls_comp, sheet_name=hoja, header=None)
                 df_new = extraer_datos(df_raw) if 'extraer_datos' in globals() else None
@@ -272,9 +305,7 @@ if uploaded_file and uploaded_consolidado:
                 df_new = None
 
             if df_new is None or df_new.empty or "NOMBRE ESTUDIANTE" not in df_new.columns:
-                # No hay datos nuevos; agregar columna vacía (si no existe) y guardar
-                if "SIMCE Nuevo" not in df_cons.columns:
-                    df_cons["SIMCE Nuevo"] = pd.NA
+                # Sin datos nuevos: solo asegurar orden y escribir
                 df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
@@ -283,29 +314,26 @@ if uploaded_file and uploaded_consolidado:
             df_cons["__key"] = df_cons[col_nombres].map(_norm)
             df_new["__key"]  = df_new["NOMBRE ESTUDIANTE"].map(_norm)
 
-            # Unir por clave normalizada (solo traemos la nota)
-            df_merge = df_cons.merge(
-                df_new[["__key", "SIMCE 1"]], on="__key", how="left"
-            )
+            # Unir por clave normalizada y crear columna nueva
+            df_merge = df_cons.merge(df_new[["__key", "SIMCE 1"]], on="__key", how="left")
+            nombre_col_nuevo = _siguiente_nombre_ensayo(df_cons, col_nombres)
+            df_merge[nombre_col_nuevo] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
 
-            # Crear la nueva columna con tipo numérico
-            df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
-
-            # Eliminar TODAS las columnas auxiliares que podrían colarse al final
+            # Limpiar auxiliares
             df_merge.drop(columns=["__key", "SIMCE 1"], inplace=True, errors="ignore")
-            # MUY IMPORTANTE: no dejar la "NOMBRE ESTUDIANTE" del lado derecho del merge
+            # (Por si en algún merge se colara una 2ª columna de nombres desde la derecha)
             if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
-                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
+                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True, errors="ignore")
 
-            # Contar coincidencias
-            coinc = int(df_merge["SIMCE Nuevo"].notna().sum())
-            sinco = int(df_merge["SIMCE Nuevo"].isna().sum())
-            resumen.append({"Hoja": hoja, "Coincidencias": coinc, "Sin coincidencia": sinco})
+            # Resumen por hoja
+            coinc = int(df_merge[nombre_col_nuevo].notna().sum())
+            sinco = int(df_merge[nombre_col_nuevo].isna().sum())
+            resumen.append({"Hoja": hoja, "Coincidencias": coinc, "Sin coincidencia": sinco, "Nueva columna": nombre_col_nuevo})
 
             # Guardar hoja
             df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
 
-    # Mostrar resumen y permitir descarga
+    # Mostrar resumen y descargar
     st.subheader("📋 Resumen de consolidación")
     st.dataframe(pd.DataFrame(resumen))
 
@@ -316,9 +344,10 @@ if uploaded_file and uploaded_consolidado:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Reutilizar en funciones 4 y 5 sin volver a subir
+    # Guardar en memoria para funciones 4/5/6
     output_consol.seek(0)
     st.session_state["consolidado_xls"] = pd.ExcelFile(output_consol)
+
 elif uploaded_consolidado and not uploaded_file:
     st.info("⚠️ Sube también el archivo complejo en la sección 'EXTRAER PUNTAJES' para poder consolidar.")
 
