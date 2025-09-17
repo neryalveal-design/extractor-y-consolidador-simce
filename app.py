@@ -1,339 +1,222 @@
-# app.py
-# ===================================================
-# Extractor y Consolidador SIMCE / PAES
-# ===================================================
 
-import re
-import unicodedata
-from io import BytesIO
-
-import numpy as np
-import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
-
-st.set_page_config(page_title="Extractor y Consolidador SIMCE/PAES", layout="wide")
-
+import pandas as pd
+from io import BytesIO
 # ================================
 # Encabezado con logo y título centrado
 # ================================
-col1, col2, col3 = st.columns([1, 3, 1])
+col1, col2, col3 = st.columns([1,3,1])
+
 with col1:
-    try:
-        st.image("assets/logo.png", width=90)
-    except Exception:
-        pass
+    st.image("logo.png", width=100)  # Logo local
+
 with col2:
     st.markdown(
         """
         <div style="text-align: center;">
             <h2 style="margin-bottom:0;">Departamento de Lenguaje</h2>
-            <h4 style="margin-top:0;">Liceo Polivalente San Nicolás</h4>
+            <h4 style="margin-top:0;">Liceo Bicentenario de Excelencia Polivalente San Nicolás</h4>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-# ===================================================
-# Utilidades comunes
-# ===================================================
+with col3:
+    st.write("")  # espacio vacío para balancear
 
-_STOP = {"de","del","la","las","los","y","e","da","do","das","dos"}
+st.title("🧠 EXTRAER PUNTAJES - Ensayos SIMCE")
 
-def _norm_text(s: str) -> str:
-    if s is None:
-        return ""
-    s = str(s).strip().lower().replace("\u00a0", " ")
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    s = re.sub(r"[^a-z0-9\s]", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+def extraer_datos(df):
+    try:
+        # Usar fila 10 como encabezado
+        raw_columns = df.iloc[9]
+        df = df[10:].reset_index(drop=True)
 
-def _tokens(s: str) -> set:
-    return {t for t in _norm_text(s).split() if t and t not in _STOP}
+        # Normalizar encabezados
+        normalized = raw_columns.astype(str).str.strip().str.lower().str.replace(r"\s+", " ", regex=True)
+        df.columns = normalized
 
-def _bow_key(tokens: set) -> str:
-    return " ".join(sorted(tokens))
+        # Detectar índices
+        idx_nombre = next((i for i, col in enumerate(normalized) if "nombre estudiante" in col), None)
+        idx_puntaje = next((i for i, col in enumerate(normalized) if "puntaje simce" in col), None)
 
-def _jaccard(a: set, b: set) -> float:
-    if not a and not b: return 1.0
-    if not a or not b:  return 0.0
-    inter = len(a & b); union = len(a | b)
-    return inter/union if union else 0.0
+        if idx_nombre is None or idx_puntaje is None:
+            st.error("No se detectaron columnas válidas de nombres o puntajes.")
+            return None
 
-def _next_ensayo_col(df_cons: pd.DataFrame, col_nombres: str) -> str:
-    """Devuelve el próximo nombre disponible 'Puntaje Ensayo n' en df_cons."""
-    nums = []
-    for c in df_cons.columns:
-        m = re.fullmatch(r"(?i)puntaje\s+ensayo\s+(\d+)", str(c).strip())
-        if m:
-            try: nums.append(int(m.group(1)))
-            except: pass
-    if nums:
-        n = max(nums) + 1
-    else:
-        cand = [c for c in df_cons.columns
-                if c != col_nombres and re.search(r"(?i)(simce|puntaje|ensayo)", str(c))]
-        n = max(2, len(cand)+1)
-    name = f"Puntaje Ensayo {n}"
-    while name in df_cons.columns:
-        n += 1
-        name = f"Puntaje Ensayo {n}"
-    return name
+        # Extraer datos
+        nombres = df.iloc[:, idx_nombre].dropna().astype(str).tolist()
+        puntajes = df.iloc[:, idx_puntaje].dropna().astype(str).tolist()
 
-def _parse_numeric_series(series: pd.Series) -> pd.Series:
-    """Convierte en forma robusta una serie (mezcla número/texto) a float (NaN si no se puede)."""
-    s = series.astype(str).str.strip()
-    s = s.str.replace("\u00a0", " ", regex=False)
-    s = s.str.replace(r"[^0-9\.,\-]+", "", regex=True)
-    def _fix(x: str) -> str:
-        if x == "" or x.lower() in {"nan", "none", "-"}: return ""
-        if "." in x and "," in x:
-            x = x.replace(".", "").replace(",", ".")
-        elif "," in x and "." not in x:
-            x = x.replace(",", ".")
-        if x.count(".") > 1:
-            first = x.find(".")
-            x = x[:first+1] + x[first+1:].replace(".", "")
-        return x
-    s = s.apply(_fix)
-    return pd.to_numeric(s, errors="coerce")
+        # Sincronizar longitudes
+        min_len = min(len(nombres), len(puntajes))
+        nombres = nombres[:min_len]
+        puntajes = puntajes[:min_len]
 
-def _detectar_col_puntaje(df: pd.DataFrame):
-    """Devuelve el nombre de la columna de puntaje en un normalizado/consolidado."""
-    preferidas = ["Puntaje Ensayo 1", "SIMCE 1"]
-    for c in preferidas:
-        if c in df.columns:
-            return c
-    for c in df.columns:
-        n = str(c).lower()
-        if any(k in n for k in ("puntaje", "simce", "ensayo")) and c != "NOMBRE ESTUDIANTE":
-            return c
-    for c in df.columns:
-        if c != "NOMBRE ESTUDIANTE" and pd.api.types.is_numeric_dtype(df[c]):
-            return c
-    return None
+        # Crear DataFrame limpio
+        df_limpio = pd.DataFrame({
+            "NOMBRE ESTUDIANTE": nombres,
+            "SIMCE 1": puntajes
+        })
 
-# ===================================================
-# FUNCIÓN 1: EXTRAER PUNTAJES (archivo complejo -> normalizado por hoja)
-# ===================================================
-st.header("📥 EXTRAER PUNTAJES (archivo complejo)")
+        return df_limpio
 
-def extraer_datos(
-    df_raw,
-    fila_encabezado: int = 9,   # 10 (humano) -> 9 (0-based)
-    fila_ini: int = 10,         # 11 (humano) -> 10
-    fila_fin: int = 80,         # exclusivo (por si hay más de 56 filas reales)
-    fallback_nombre_col: int = 2  # C (0-based)
-):
-    """
-    Extrae nombres y puntajes desde una hoja del archivo complejo tipo SIMCE/Ensayo.
-    Devuelve DataFrame con columnas ['NOMBRE ESTUDIANTE', 'Puntaje Ensayo 1'] (float).
-    Incluye un FALBACK fila-a-fila para puntajes faltantes.
-    """
-    headers = df_raw.iloc[fila_encabezado].astype(str).str.lower().fillna("")
+    except Exception as e:
+        st.error(f"Error procesando el archivo: {e}")
+        return None
 
-    # --- Columna de nombres ---
-    cand_name_cols = [i for i, v in enumerate(headers) if ("nombre" in v and "estudiante" in v)]
-    col_name = cand_name_cols[0] if cand_name_cols else fallback_nombre_col
-
-    # --- Columna de puntaje (por encabezado) ---
-    cand_score_cols = [i for i, v in enumerate(headers)
-                       if ("puntaje" in v and ("simce" in v or "ensayo" in v))]
-    col_score = cand_score_cols[0] if cand_score_cols else None
-
-    # --- Rango de estudiantes ---
-    sub = df_raw.iloc[fila_ini:fila_fin].copy()
-
-    # --- Nombres y filtro de válidos ---
-    nombres = sub.iloc[:, col_name].astype(str).str.strip()
-    invalid = {"", "nan", "nombre estudiante", "curso", "correctas", "a", "b", "c", "d", "e"}
-    mask_valid = ~nombres.str.lower().isin(invalid)
-
-    # ---------- Utilidades numéricas ----------
-    def _to_num_str(s: str) -> str:
-        if s is None:
-            return ""
-        s = str(s).strip()
-        if s == "":
-            return ""
-        if "." in s and "," in s:
-            s = s.replace(".", "").replace(",", ".")   # 1.234,56 -> 1234.56
-        elif "," in s and "." not in s:
-            s = s.replace(",", ".")                    # 269,56 -> 269.56
-        if s.count(".") > 1:
-            first = s.find(".")
-            s = s[:first+1] + s[first+1:].replace(".", "")
-        return s
-
-    def _serie_to_num(sr: pd.Series) -> pd.Series:
-        sr = sr.astype(str).str.strip()
-        sr = sr.str.replace("\u00a0", " ", regex=False)
-        sr = sr.replace({'^[oO-]$': ''}, regex=True)      # 'o'/'O'/'-' -> omitida
-        sr = sr.str.replace(r"[^0-9\.,\-]+", "", regex=True)
-        sr = sr.apply(_to_num_str)
-        return pd.to_numeric(sr, errors="coerce")
-
-    # --- Elegir mejor columna de puntaje si no hay encabezado claro ---
-    def _col_mas_numerica(df_slice):
-        best_col, best_score = None, -1.0
-        for j in range(df_slice.shape[1]):
-            nums = _serie_to_num(df_slice.iloc[:, j])
-            valid = nums.between(0, 1000, inclusive="both")
-            score = valid.mean()
-            if score > best_score:
-                best_score, best_col = score, j
-        return best_col
-
-    if col_score is None:
-        col_score = _col_mas_numerica(sub)
-
-    # --- Lectura inicial de puntajes ---
-    puntajes = _serie_to_num(sub.iloc[:, col_score])
-    # Alinear con filas válidas de nombre
-    nombres_valid = nombres[mask_valid]
-    puntajes_valid = puntajes[mask_valid].copy()
-
-    # --- Fallback fila-a-fila para faltantes ---
-    headers_full = headers
-    sub_valid = sub[mask_valid].copy()
-
-    def _mejor_puntaje_fila(row: pd.Series) -> float:
-        mejor = np.nan
-        mejor_desde_header = False
-        for j, cell in enumerate(row):
-            num = _serie_to_num(pd.Series([cell])).iloc[0]
-            if pd.isna(num) or not (100 <= num <= 1000):
-                continue
-            h = str(headers_full.iloc[j]).lower()
-            es_header_score = ("puntaje" in h) or ("simce" in h) or ("ensayo" in h)
-            if es_header_score:
-                mejor = num
-                mejor_desde_header = True
-            elif not mejor_desde_header:
-                if pd.isna(mejor) or num > mejor:
-                    mejor = num
-        return mejor
-
-    faltantes_idx = puntajes_valid.index[puntajes_valid.isna()]
-    if len(faltantes_idx) > 0:
-        fallback_series = sub_valid.apply(_mejor_puntaje_fila, axis=1)
-        puntajes_valid = puntajes_valid.combine_first(fallback_series)
-
-    # --- Salida ---
-    out = pd.DataFrame({
-        "NOMBRE ESTUDIANTE": nombres_valid.str.replace(r"\s+", " ", regex=True).str.strip().values,
-        "Puntaje Ensayo 1": puntajes_valid.values
-    })
-    out = out[out["NOMBRE ESTUDIANTE"] != ""].reset_index(drop=True)
-    return out
-
-uploaded_file = st.file_uploader("Sube el archivo Excel complejo (múltiples hojas)", type=["xlsx"], key="archivo_complejo")
+uploaded_file = st.file_uploader("Sube un archivo Excel", type=["xlsx"])
 
 if uploaded_file:
-    complex_bytes = uploaded_file.getvalue()
-    st.session_state["complex_bytes"] = complex_bytes
-    st.session_state["xls_complex"] = pd.ExcelFile(BytesIO(complex_bytes))
-
-    xls = st.session_state["xls_complex"]
+    xls = pd.ExcelFile(uploaded_file)
     hojas_validas = xls.sheet_names
+
     st.write("Hojas detectadas:", hojas_validas)
 
-    df_cursos = {}
     for hoja in hojas_validas:
         st.subheader(f"Procesando hoja: {hoja}")
-        df_raw = pd.read_excel(xls, sheet_name=hoja, header=None)
-        df_extraido = extraer_datos(df_raw)
-        if df_extraido is not None and not df_extraido.empty:
-            st.dataframe(df_extraido.head(10))
-            df_cursos[hoja] = df_extraido
+        df = pd.read_excel(xls, sheet_name=hoja, header=None)
 
-            out = BytesIO()
-            with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+        df_extraido = extraer_datos(df)
+
+        if df_extraido is not None:
+            st.write("Vista previa de datos extraídos:")
+            st.dataframe(df_extraido)
+
+            # Generar archivo descargable
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_extraido.to_excel(writer, index=False, sheet_name='Resultados')
+                worksheet = writer.sheets['Resultados']
+                worksheet.write('A1', 'NOMBRE ESTUDIANTE')
+                worksheet.write('B1', 'SIMCE 1')
             st.download_button(
                 label=f"📥 Descargar resultados hoja {hoja}",
-                data=out.getvalue(),
+                data=output.getvalue(),
                 file_name=f"resultados_{hoja}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-        else:
-            st.warning(f"No se extrajeron datos en {hoja}.")
-
-    if df_cursos:
-        st.session_state["df_cursos"] = df_cursos
-
+            
+    # 🔄 Crear archivo combinado con todas las hojas de curso
     st.subheader("📦 Exportar todas las hojas a un único Excel normalizado")
+
     combined_output = BytesIO()
     with pd.ExcelWriter(combined_output, engine='xlsxwriter') as writer:
-        for hoja, dfh in df_cursos.items():
-            dfh.to_excel(writer, index=False, sheet_name=hoja[:31])
+        for hoja in hojas_validas:
+            df = pd.read_excel(xls, sheet_name=hoja, header=None)
+            df_extraido = extraer_datos(df)
+
+            if df_extraido is not None:
+                df_extraido.to_excel(writer, index=False, sheet_name=hoja[:31])  # Máximo 31 caracteres para nombre hoja
+                worksheet = writer.sheets[hoja[:31]]
+                worksheet.write('A1', 'NOMBRE ESTUDIANTE')
+                worksheet.write('B1', 'SIMCE 1')
+
     st.download_button(
         label="📥 Descargar Excel Normalizado con todas las hojas",
         data=combined_output.getvalue(),
         file_name="excel_normalizado.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+# 📊 Función 2: Análisis por curso (ajustada con títulos y columnas)
+import matplotlib.pyplot as plt
 
-# ===================================================
-# FUNCIÓN 2: ANÁLISIS POR CURSO (SIMCE/PAES)
-# ===================================================
-st.header("📊 Análisis por curso")
+st.header("📈 Análisis por curso")
 
-criterio = st.radio("Elige criterio", ["SIMCE", "PAES"], horizontal=True, key="crit_curso")
+criterio = st.radio("Selecciona el criterio de análisis", ["SIMCE", "PAES"], key="criterio_analisis")
 
-if "df_cursos" in st.session_state:
-    dfc = st.session_state["df_cursos"]
+# Rango de criterios
+if criterio == "SIMCE":
+    rangos = {
+        "Insuficiente": (0, 250),
+        "Intermedio": (251, 285),
+        "Adecuado": (286, 400)
+    }
+else:  # PAES
+    rangos = {
+        "Insuficiente": (0, 599),
+        "Intermedio": (600, 799),
+        "Adecuado": (800, 1000)
+    }
 
-    def clasificar(p):
-        try:
-            x = float(p)
-        except:
-            return "Sin datos"
-        if criterio == "SIMCE":
-            if 0 <= x <= 250: return "Insuficiente"
-            if 251 <= x <= 285: return "Intermedio"
-            if 285 < x <= 400: return "Adecuado"
-            return "Sin datos"
-        else:  # PAES
-            if 0 <= x <= 599: return "Insuficiente"
-            if 600 <= x <= 799: return "Intermedio"
-            if 800 <= x <= 1000: return "Adecuado"
-            return "Sin datos"
+if uploaded_file:
+    xls_analisis = pd.ExcelFile(uploaded_file)
+    hojas_analisis = xls_analisis.sheet_names
 
-    total_counts = {"Insuficiente":0, "Intermedio":0, "Adecuado":0}
+    total_categorias = {"Insuficiente": 0, "Intermedio": 0, "Adecuado": 0}
+    total_estudiantes = 0
 
-    cols = st.columns(2)
-    i = 0
-    for hoja, dfh in dfc.items():
-        col = cols[i % 2]
-        with col:
-            score_col = _detectar_col_puntaje(dfh)
-            if not score_col:
-                st.warning(f"No se encontró columna de puntajes en {hoja}.")
-                continue
-            serie = dfh[score_col].apply(clasificar)
-            counts = serie.value_counts().reindex(["Insuficiente","Intermedio","Adecuado"], fill_value=0)
-            for k in total_counts: total_counts[k] += int(counts[k])
+    col1, col2 = st.columns(2)  # 🔥 dos columnas para los gráficos
+    toggle = True  # alternar entre columnas
 
-            fig, ax = plt.subplots(figsize=(5.5, 4))
-            vals = counts.values
-            labels = counts.index.tolist()
-            ax.pie(vals, labels=labels, autopct="%1.1f%%", startangle=90, shadow=True)
-            ax.set_title(f"Distribución por rendimiento - {hoja}")
-            st.pyplot(fig)
-        i += 1
+    for hoja in hojas_analisis:
+        df_raw = pd.read_excel(xls_analisis, sheet_name=hoja, header=None)
+        df = extraer_datos(df_raw)
 
-    st.subheader("🔵 Distribución global (todos los cursos)")
-    fig, ax = plt.subplots(figsize=(6, 4))
-    vals = list(total_counts.values())
-    labels = list(total_counts.keys())
-    ax.pie(vals, labels=labels, autopct="%1.1f%%", startangle=90, shadow=True)
-    ax.set_title("Distribución global por rendimiento")
-    st.pyplot(fig)
-else:
-    st.info("Primero ejecuta 'EXTRAER PUNTAJES'.")
+        if df is None or "SIMCE 1" not in df.columns:
+            st.warning(f"La hoja '{hoja}' no pudo procesarse. Se omitirá.")
+            continue
+
+        puntajes = pd.to_numeric(df["SIMCE 1"], errors='coerce').dropna()
+
+        categorias = {
+            "Insuficiente": ((puntajes >= rangos["Insuficiente"][0]) & (puntajes <= rangos["Insuficiente"][1])).sum(),
+            "Intermedio": ((puntajes >= rangos["Intermedio"][0]) & (puntajes <= rangos["Intermedio"][1])).sum(),
+            "Adecuado": ((puntajes >= rangos["Adecuado"][0]) & (puntajes <= rangos["Adecuado"][1])).sum(),
+        }
+
+        suma_curso = sum(categorias.values())
+        if suma_curso == 0:
+            continue
+
+        for k in categorias:
+            total_categorias[k] += categorias[k]
+        total_estudiantes += suma_curso
+
+        # Gráfico circular por curso
+        fig, ax = plt.subplots(figsize=(5, 5))
+        valores = list(categorias.values())
+        etiquetas = list(categorias.keys())
+        colores = ["red", "yellow", "green"]
+        explode = [0.1 if v == max(valores) else 0 for v in valores]
+
+        ax.pie(
+            valores,
+            labels=[f"{etiquetas[i]} ({valores[i]})" for i in range(len(etiquetas))],
+            colors=colores,
+            explode=explode,
+            autopct="%1.1f%%",
+            shadow=True,
+            startangle=90
+        )
+        ax.set_title(f"Distribución por desempeño - {hoja}")
+
+        if toggle:
+            col1.pyplot(fig)
+        else:
+            col2.pyplot(fig)
+        toggle = not toggle
+
+    # Gráfico global
+    if total_estudiantes > 0:
+        fig_total, ax_total = plt.subplots(figsize=(5, 5))
+        valores = list(total_categorias.values())
+        etiquetas = list(total_categorias.keys())
+        colores = ["red", "yellow", "green"]
+        explode = [0.1 if v == max(valores) else 0 for v in valores]
+
+        ax_total.pie(
+            valores,
+            labels=[f"{etiquetas[i]} ({valores[i]})" for i in range(len(etiquetas))],
+            colors=colores,
+            explode=explode,
+            autopct="%1.1f%%",
+            shadow=True,
+            startangle=90
+        )
+        ax_total.set_title("📊 Distribución total de desempeño")
+
+        st.pyplot(fig_total)
 
 # ================================
 # 📂 FUNCIÓN 3: CONSOLIDACIÓN DE PUNTAJES (corregida: sin nombres en la última columna)
@@ -401,31 +284,9 @@ if uploaded_file and uploaded_consolidado:
             df_new["__key"]  = df_new["NOMBRE ESTUDIANTE"].map(_norm)
 
             # Unir por clave normalizada (solo traemos la nota)
-            # Detectar la columna de puntajes en df_new (buscamos cualquier columna con "simce")
-            col_puntaje_new = None
-            for col in df_new.columns:
-                if "simce" in str(col).lower():
-                    col_puntaje_new = col
-                    break
-
-            if col_puntaje_new is None:
-                st.warning(f"No se encontró ninguna columna de puntajes en los datos nuevos para la hoja {hoja}.")
-                df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
-                resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
-                continue
-
-            # Hacer el merge usando el nombre detectado
             df_merge = df_cons.merge(
-                df_new[["__key", col_puntaje_new]], on="__key", how="left"
+                df_new[["__key", "SIMCE 1"]], on="__key", how="left"
             )
-
-            # Crear la nueva columna con tipo numérico
-            df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge[col_puntaje_new], errors="coerce")
-
-            # Limpiar columnas auxiliares
-            df_merge.drop(columns=["__key", col_puntaje_new], inplace=True, errors="ignore")
-            if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
-                df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
 
             # Crear la nueva columna con tipo numérico
             df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
@@ -461,21 +322,27 @@ if uploaded_file and uploaded_consolidado:
 elif uploaded_consolidado and not uploaded_file:
     st.info("⚠️ Sube también el archivo complejo en la sección 'EXTRAER PUNTAJES' para poder consolidar.")
 
-# ===================================================
-# FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE (reutiliza consolidado)
-# ===================================================
+
+# ================================
+# 🎯 FUNCIÓN 4: ANÁLISIS POR ESTUDIANTE
+# ================================
+import matplotlib.pyplot as plt
+
 st.header("🎯 Análisis por estudiante")
 
-if "consolidado_bytes" not in st.session_state:
-    st.warning("⚠️ Primero ejecuta la función 3 (Consolidación de puntajes).")
+# Verificamos que ya exista el consolidado en memoria
+if "consolidado_xls" not in st.session_state:
+    st.warning("⚠️ Primero debes ejecutar la función 3 (Consolidación de puntajes).")
 else:
-    xls_est = pd.ExcelFile(BytesIO(st.session_state["consolidado_bytes"]))
+    xls_est = st.session_state["consolidado_xls"]
     hojas_est = xls_est.sheet_names
 
-    curso_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_est, key="f4_curso_sel")
+    # Selección de curso (hoja)
+    curso_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_est)
+
     df_curso = pd.read_excel(xls_est, sheet_name=curso_sel)
 
-    # detectar columna de nombres
+    # Detectar columna de nombres
     col_nombres = None
     for col in df_curso.columns:
         if "nombre" in str(col).lower() and "estudiante" in str(col).lower():
@@ -483,166 +350,153 @@ else:
             break
 
     if col_nombres is None:
-        st.error("No se encontró columna de nombres en esta hoja.")
+        st.error("No se encontró una columna de nombres de estudiantes en esta hoja.")
     else:
-        estudiantes_opciones = df_curso[col_nombres].dropna().unique()
-        estudiante_sel = st.selectbox("Elige un estudiante", estudiantes_opciones, key="f4_estudiante_sel")
+        # Selección de estudiante
+        estudiante_sel = st.selectbox("Elige un estudiante", df_curso[col_nombres].dropna().unique())
 
+        # Extraer fila del estudiante
         df_est = df_curso[df_curso[col_nombres] == estudiante_sel].copy()
-        if df_est.empty:
-            st.info("No se encontró información para el estudiante seleccionado.")
-        else:
-            # columnas de puntajes (mantener orden original)
-            cols_puntajes = []
-            for c in df_est.columns:
-                if c == col_nombres: continue
-                serie = df_est[c]
-                is_num = pd.api.types.is_numeric_dtype(serie)
-                has_kw = any(k in str(c).lower() for k in ("simce","puntaje","ensayo"))
-                if is_num or has_kw:
+
+        # Detectar columnas de puntajes
+        cols_puntajes = [
+            c for c in df_est.columns
+            if c != col_nombres and pd.api.types.is_numeric_dtype(df_est[c])
+        ]
+        for c in df_est.columns:
+            if c != col_nombres and ("simce" in str(c).lower() or "puntaje" in str(c).lower()):
+                if c not in cols_puntajes:
                     cols_puntajes.append(c)
 
-            if not cols_puntajes:
-                st.warning("No se encontraron columnas de puntajes en esta hoja.")
+        if not cols_puntajes:
+            st.warning("No se encontraron columnas de puntajes en esta hoja.")
+        else:
+            # Orden cronológico aproximado
+            cols_puntajes = sorted(cols_puntajes)
+
+            puntajes = df_est[cols_puntajes].iloc[0].tolist()
+
+            # Filtrar solo valores válidos
+            x = [c for c, p in zip(cols_puntajes, puntajes) if pd.notna(p)]
+            y = [p for p in puntajes if pd.notna(p)]
+
+            if not y:
+                st.info(f"No hay puntajes disponibles para {estudiante_sel}.")
             else:
-                row_raw = df_est[cols_puntajes].iloc[0]
-                row_num = _parse_numeric_series(row_raw)
+                # Crear gráfico
+                fig, ax = plt.subplots(figsize=(7, 4))
+                ax.plot(x, y, marker="o", linestyle="-", color="blue")
 
-                mask = row_num.notna()
-                x_labels = list(row_num.index[mask])
-                y_vals = list(row_num[mask].astype(float))
+                # Anotar valores en cada punto
+                for i, (xi, yi) in enumerate(zip(x, y)):
+                    ax.text(i, yi + 5, str(int(yi)), ha="center", fontsize=9)
 
-                if not y_vals:
-                    st.info(f"No hay puntajes disponibles para {estudiante_sel}.")
-                else:
-                    fig, ax = plt.subplots(figsize=(7, 4))
-                    ax.plot(range(len(x_labels)), y_vals, marker="o", linestyle="-")
-                    offset = (max(y_vals) - min(y_vals)) * 0.03 if len(y_vals) > 1 else 5
-                    for i, yi in enumerate(y_vals):
-                        ax.text(i, yi + offset, f"{yi:.2f}", ha="center", fontsize=9)
-                    ax.set_title(f"Evolución del rendimiento - {estudiante_sel} ({curso_sel})")
-                    ax.set_ylabel("Puntaje")
-                    ax.set_xlabel("Ensayos")
-                    ax.grid(True)
-                    ax.set_xticks(range(len(x_labels)))
-                    ax.set_xticklabels(x_labels, fontsize=8, rotation=30)
-                    st.pyplot(fig)
+                ax.set_title(f"Evolución del rendimiento - {estudiante_sel} ({curso_sel})")
+                ax.set_ylabel("Puntaje")
+                ax.set_xlabel("Ensayos")
+                ax.grid(True)
 
-                    promedio = float(np.nanmean(np.array(y_vals, dtype=float)))
-                    st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
+                # 🔧 Ajustar etiquetas del eje X
+                ax.set_xticks(range(len(x)))
+                ax.set_xticklabels(x, fontsize=8, rotation=30)
 
-# ===================================================
-# FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO (reutiliza consolidado)
-# ===================================================
+                st.pyplot(fig)
+
+                # Promedio
+                promedio = sum(y) / len(y)
+                st.success(f"📊 Puntaje promedio de {estudiante_sel}: **{promedio:.2f}**")
+
+
+# ================================
+# 📉 FUNCIÓN 5: ESTUDIANTES CON RENDIMIENTO MÁS BAJO
+# ================================
 st.header("📉 Estudiantes con rendimiento más bajo")
 
-if "consolidado_bytes" not in st.session_state:
-    st.warning("⚠️ Primero ejecuta la función 3 (Consolidación de puntajes).")
+if "consolidado_xls" not in st.session_state:
+    st.warning("⚠️ Primero debes ejecutar la función 3 (Consolidación de puntajes).")
 else:
-    xls_low = pd.ExcelFile(BytesIO(st.session_state["consolidado_bytes"]))
-    hojas_low = xls_low.sheet_names
+    xls_bajos = st.session_state["consolidado_xls"]
 
-    for hoja in hojas_low:
-        st.subheader(f"Curso: {hoja}")
-        df_low = pd.read_excel(xls_low, sheet_name=hoja)
+    for hoja in xls_bajos.sheet_names:
+        df_curso = pd.read_excel(xls_bajos, sheet_name=hoja)
 
-        # columna de nombres
         col_nombres = None
-        for col in df_low.columns:
+        for col in df_curso.columns:
             if "nombre" in str(col).lower() and "estudiante" in str(col).lower():
                 col_nombres = col
                 break
-        if col_nombres is None:
-            st.warning(f"No se encontró columna de nombres en {hoja}")
-            continue
 
-        # detectar última columna de ensayos tipo "Puntaje Ensayo n"
-        ensayos = []
-        for c in df_low.columns:
-            m = re.fullmatch(r"(?i)puntaje\s+ensayo\s+(\d+)", str(c).strip())
-            if m:
-                try: ensayos.append((int(m.group(1)), c))
-                except: pass
-        if ensayos:
-            ensayos.sort()
-            ultima_col = ensayos[-1][1]
-        else:
-            cand = [c for c in df_low.columns if c != col_nombres and pd.api.types.is_numeric_dtype(df_low[c])]
-            if not cand:
-                st.warning(f"No hay columnas de puntajes en {hoja}")
-                continue
-            ultima_col = cand[-1]
+        if col_nombres:
+            cols_puntajes = [c for c in df_curso.columns if c != col_nombres and pd.api.types.is_numeric_dtype(df_curso[c])]
+            if cols_puntajes:
+                df_curso["Promedio"] = df_curso[cols_puntajes].mean(axis=1, skipna=True)
+                df_bajos = df_curso[[col_nombres, "Promedio"]].sort_values("Promedio").head(10)
+                st.subheader(f"📍 Curso {hoja}")
+                st.table(df_bajos)
 
-        df_show = df_low[[col_nombres, ultima_col]].copy()
-        df_show[ultima_col] = _parse_numeric_series(df_show[ultima_col])
-        df_top10 = df_show.dropna(subset=[ultima_col]).sort_values(by=ultima_col, ascending=True).head(10)
-        st.table(df_top10)
-
-# ===================================================
-# FUNCIÓN 6: ANÁLISIS DE PREGUNTAS Y DISTRACTORES (reutiliza archivo complejo)
-# ===================================================
+# ================================
+# 📝 FUNCIÓN 6: ANÁLISIS DE PREGUNTAS Y DISTRACTORES 
+# ================================
 st.header("📝 Análisis de preguntas y distractores")
 
-if "xls_complex" not in st.session_state:
-    st.info("⚠️ Primero sube el archivo complejo en 'EXTRAER PUNTAJES'.")
-else:
-    xls_preg = st.session_state["xls_complex"]
+if uploaded_file:  # usamos el archivo ya cargado en la función 1
+    xls_preg = pd.ExcelFile(uploaded_file)
     hojas_preg = xls_preg.sheet_names
-    hoja_sel = st.selectbox("Elige el curso (hoja de Excel) para analizar preguntas", hojas_preg, key="f6_hoja")
+
+    hoja_sel = st.selectbox("Elige el curso (hoja de Excel)", hojas_preg, key="hoja_preg_final")
 
     df_preg = pd.read_excel(xls_preg, sheet_name=hoja_sel, header=None)
-    # Claves y preguntas
-    claves = df_preg.iloc[8, 3:68].tolist()     # D9:BP9
-    preguntas = df_preg.iloc[9, 3:68].tolist()  # D10:BP10
 
+    # Extraer claves correctas y números de preguntas
+    claves = df_preg.iloc[8, 3:68].tolist()      # fila 9 → índice 8, columnas D=3 a BP
+    preguntas = df_preg.iloc[9, 3:68].tolist()   # fila 10 → índice 9
+
+    # Filtrar solo preguntas con clave no vacía
     valid_idx = [i for i, c in enumerate(claves) if pd.notna(c) and str(c).strip() != ""]
-    claves_fil = [claves[i] for i in valid_idx]
-    preguntas_fil = [preguntas[i] for i in valid_idx]
+    claves = [claves[i] for i in valid_idx]
+    preguntas = [preguntas[i] for i in valid_idx]
 
-    # Respuestas de estudiantes
-    respuestas = df_preg.iloc[10:80, 3:68]      # D11:BP80 (por si hay más filas)
+    # Respuestas de estudiantes (filas 11-56 → índices 10:56)
+    respuestas = df_preg.iloc[10:56, 3:68]
 
+    # Cálculo de % de aciertos por pregunta
     resumen = []
-    for pos, clave in zip(valid_idx, claves_fil):
-        col = respuestas.iloc[:, pos]
+    for j, clave in zip(valid_idx, claves):
+        col = respuestas.iloc[:, j]
         total = col.notna().sum()
-        aciertos = (col.astype(str).str.strip().str.lower() == str(clave).strip().lower()).sum()
+        aciertos = (col.astype(str).str.lower() == str(clave).lower()).sum()
         pct = aciertos / total * 100 if total > 0 else 0
 
-        # Conteos de alternativas A..E
-        conteos_col = 3 + pos
-        conteos = df_preg.iloc[59:64, conteos_col]  # filas 60-64 (A..E)
+        # Extraer conteos de alternativas (filas 60-64 → índices 59:64)
+        conteos = df_preg.iloc[59:64, j+3]  # +3 porque D=3
         alternativas = ["A", "B", "C", "D", "E"]
         dist = dict(zip(alternativas, conteos))
 
-        # Omitir E si duplica a D
-        try:
-            if dist["D"] == dist["E"]:
-                dist.pop("E")
-        except Exception:
-            pass
+        # Omitir alternativa E si es duplicada de D
+        if dist["D"] == dist["E"]:
+            dist.pop("E")
 
-        # Observaciones
+        # Detectar distractores
         obs = ""
-        total_resps = float(sum([v for v in dist.values() if pd.notna(v)])) if dist else 0.0
+        total_resps = sum(dist.values())
         if total_resps > 0:
-            dist_pct = {}
-            for k, v in dist.items():
-                try:
-                    dist_pct[k] = float(v) / total_resps * 100.0
-                except:
-                    dist_pct[k] = 0.0
-            dist_inc = {k: v for k, v in dist_pct.items() if k.lower() != str(clave).lower()}
-            if dist_inc:
-                max_alt = max(dist_inc, key=dist_inc.get)
-                if dist_inc[max_alt] > 50:
+            dist_pct = {k: v/total_resps*100 for k, v in dist.items()}
+            # Quitar la alternativa correcta
+            dist_incorrectas = {k: v for k, v in dist_pct.items() if k.lower() != str(clave).lower()}
+
+            if dist_incorrectas:
+                # Distractor fuerte: alternativa incorrecta con >50%
+                max_alt = max(dist_incorrectas, key=dist_incorrectas.get)
+                if dist_incorrectas[max_alt] > 50:
                     obs = f"Distractor fuerte: {max_alt}"
-                vals = list(dist_inc.values())
-                if pct < 50 and len(vals) > 1 and (max(vals) - min(vals) < 10):
+
+                # Alta dispersión solo si % acierto < 50
+                vals = list(dist_incorrectas.values())
+                if pct < 50 and max(vals) - min(vals) < 10 and len(vals) > 1:
                     obs = "Alta dispersión"
 
         resumen.append({
-            "Pregunta": preguntas_fil[valid_idx.index(pos)],
+            "Pregunta": preguntas[valid_idx.index(j)],
             "Correcta": clave,
             "% Aciertos": round(pct, 2),
             "Observación": obs
@@ -652,10 +506,14 @@ else:
     st.subheader("📊 Resumen de preguntas críticas")
     st.dataframe(df_resumen)
 
+    # Gráfico de % de aciertos
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.bar(df_resumen["Pregunta"], df_resumen["% Aciertos"])
+    ax.bar(df_resumen["Pregunta"], df_resumen["% Aciertos"], color="skyblue")
     ax.set_title(f"% de aciertos por pregunta - {hoja_sel}")
     ax.set_xlabel("Pregunta")
     ax.set_ylabel("% Aciertos")
     plt.xticks(rotation=45)
     st.pyplot(fig)
+else:
+    st.info("⚠️ Primero debes subir un archivo en la sección 'EXTRAER PUNTAJES'.")
+
