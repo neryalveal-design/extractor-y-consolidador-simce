@@ -453,7 +453,7 @@ if uploaded_file and uploaded_consolidado:
             })
 
             # Guardar hoja
-            df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])(writer, index=False, sheet_name=hoja[:31])
+            df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
 
     # Mostrar resumen y permitir descarga
     st.subheader("📋 Resumen de consolidación")
