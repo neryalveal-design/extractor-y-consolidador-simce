@@ -408,10 +408,17 @@ if uploaded_file and uploaded_consolidado:
             col_puntaje_new = None
             for col in df_new.columns:
                 col_low = str(col).lower().strip()
-                if ("simce" in col_low or "puntaje" in col_low 
+                if ("simce" in col_low or "puntaje" in col_low or "ensayo" in col_low 
                     or col_low == "total" or col_low == "fk"):
                     col_puntaje_new = col
                     break
+
+            # Fallback: primera columna numérica válida que no sea nombre/__key
+            if col_puntaje_new is None:
+                for col in df_new.columns:
+                    if col not in ("NOMBRE ESTUDIANTE", "__key") and pd.api.types.is_numeric_dtype(df_new[col]):
+                        col_puntaje_new = col
+                        break
 
             if col_puntaje_new is None:
                 st.warning(f"No se encontró columna de puntajes en los datos nuevos para {hoja}.")
