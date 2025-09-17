@@ -388,8 +388,7 @@ if uploaded_file and uploaded_consolidado:
                 if df_new is not None:
                     # Normalizar nombres de columnas y mostrar debug
                     df_new.columns = df_new.columns.astype(str).str.strip()
-                    st.write(f"
-### Debug columnas en {hoja}:")
+                    st.write(f"### Debug columnas en {hoja}:")
                     st.write(list(df_new.columns))
                     st.dataframe(df_new.head())
             except Exception:
