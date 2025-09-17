@@ -431,10 +431,10 @@ if uploaded_file and uploaded_consolidado:
                 continue
 
             # Unir por clave normalizada (solo traemos la nota y la renombramos)
-            df_merge = df_cons.merge(
-                df_new[["__key", col_puntaje_new]].rename(columns={col_puntaje_new: nuevo_nombre}),
-                on="__key", how="left"
-            )
+            df_tmp = df_new[["__key", col_puntaje_new]].copy()
+            df_tmp.rename(columns={col_puntaje_new: nuevo_nombre}, inplace=True)
+
+            df_merge = df_cons.merge(df_tmp, on="__key", how="left")
 
             # Asegurar tipo numérico solo si la columna fue creada
             if nuevo_nombre in df_merge.columns:
@@ -442,7 +442,18 @@ if uploaded_file and uploaded_consolidado:
             else:
                 st.warning(f"No se creó la columna {nuevo_nombre} en {hoja}.")
 
-            # Limpiar columnas auxiliares y duplicadas
+            # Limpiar columnas auxiliares
+            df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
+
+            # Eliminar columnas duplicadas _x/_y que hayan quedado del merge
+            for c in list(df_merge.columns):
+                if c.endswith("_x") or c.endswith("_y"):
+                    df_merge.drop(columns=[c], inplace=True, errors="ignore")
+
+            # Extra: si quedaron duplicados de 'Puntaje Ensayo 1', normalizarlos
+            cols_dup = [c for c in df_merge.columns if "Puntaje Ensayo 1" in str(c) and ("_x" in c or "_y" in c)]
+            for c in cols_dup:
+                df_merge.drop(columns=[c], inplace=True, errors="ignore")
             df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
             for c in list(df_merge.columns):
                 if c.endswith("_x") or c.endswith("_y"):
