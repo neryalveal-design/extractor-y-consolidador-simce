@@ -385,12 +385,6 @@ if uploaded_file and uploaded_consolidado:
             try:
                 df_raw = pd.read_excel(xls_comp, sheet_name=hoja, header=None)
                 df_new = extraer_datos(df_raw) if 'extraer_datos' in globals() else None
-                if df_new is not None:
-                    # Normalizar nombres de columnas y mostrar debug
-                    df_new.columns = df_new.columns.astype(str).str.strip()
-                    st.write(f"### Debug columnas en {hoja}:")
-                    st.write(list(df_new.columns))
-                    st.dataframe(df_new.head())
             except Exception:
                 df_new = None
 
@@ -412,14 +406,19 @@ if uploaded_file and uploaded_consolidado:
 
             # Detectar la columna de puntajes en df_new
             col_puntaje_new = None
-            for col in df_new.columns:
-                col_low = str(col).lower().strip()
-                if ("simce" in col_low or "puntaje" in col_low or "ensayo" in col_low 
-                    or col_low == "total" or col_low == "fk"):
-                    col_puntaje_new = col
-                    break
 
-            # Fallback: primera columna numérica válida que no sea nombre/__key
+            # Caso especial: si viene "Puntaje Ensayo 1", usarla directo
+            if "Puntaje Ensayo 1" in df_new.columns:
+                col_puntaje_new = "Puntaje Ensayo 1"
+            else:
+                for col in df_new.columns:
+                    col_low = str(col).lower().strip()
+                    if ("simce" in col_low or "puntaje" in col_low or "ensayo" in col_low 
+                        or col_low == "total" or col_low == "fk"):
+                        col_puntaje_new = col
+                        break
+
+            # Fallback: primera columna numérica válida
             if col_puntaje_new is None:
                 for col in df_new.columns:
                     if col not in ("NOMBRE ESTUDIANTE", "__key") and pd.api.types.is_numeric_dtype(df_new[col]):
