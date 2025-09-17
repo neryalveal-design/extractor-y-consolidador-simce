@@ -427,10 +427,14 @@ if uploaded_file and uploaded_consolidado:
             )
 
             # Renombrar la columna detectada al nombre correlativo
-            df_merge.rename(columns={col_puntaje_new: nuevo_nombre}, inplace=True)
+            if col_puntaje_new in df_merge.columns:
+                df_merge.rename(columns={col_puntaje_new: nuevo_nombre}, inplace=True)
 
-            # Convertir a numérico
-            df_merge[nuevo_nombre] = pd.to_numeric(df_merge[nuevo_nombre], errors="coerce")
+            # Convertir a numérico solo si existe
+            if nuevo_nombre in df_merge.columns:
+                df_merge[nuevo_nombre] = pd.to_numeric(df_merge[nuevo_nombre], errors="coerce")
+            else:
+                st.warning(f"No se pudo agregar la columna de puntajes en la hoja {hoja}.")
 
             # Eliminar columnas auxiliares
             df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
