@@ -417,16 +417,20 @@ if uploaded_file and uploaded_consolidado:
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
+            # Determinar el nombre del nuevo puntaje (correlativo)
+            n_existentes = sum("Puntaje Ensayo" in str(c) for c in df_cons.columns)
+            nuevo_nombre = f"Puntaje Ensayo {n_existentes + 1}"
+
             # Unir por clave normalizada (solo traemos la nota)
             df_merge = df_cons.merge(
                 df_new[["__key", col_puntaje_new]], on="__key", how="left"
             )
 
-            # Renombrar la columna detectada a un nombre estándar
-            df_merge.rename(columns={col_puntaje_new: "SIMCE Nuevo"}, inplace=True)
+            # Renombrar la columna detectada al nombre correlativo
+            df_merge.rename(columns={col_puntaje_new: nuevo_nombre}, inplace=True)
 
             # Convertir a numérico
-            df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE Nuevo"], errors="coerce")
+            df_merge[nuevo_nombre] = pd.to_numeric(df_merge[nuevo_nombre], errors="coerce")
 
             # Eliminar columnas auxiliares
             df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
