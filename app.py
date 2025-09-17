@@ -438,11 +438,15 @@ if uploaded_file and uploaded_consolidado:
 
             # Asegurar tipo numérico solo si la columna fue creada
             if nuevo_nombre in df_merge.columns:
-                serie = df_merge.loc[:, nuevo_nombre]
-                if isinstance(serie, pd.Series):
-                    df_merge[nuevo_nombre] = pd.to_numeric(serie, errors="coerce")
+                col_data = df_merge[nuevo_nombre]
+                if isinstance(col_data, pd.DataFrame):
+                    # Si hay duplicados, tomar la primera columna
+                    serie = col_data.iloc[:, 0]
                 else:
-                    st.warning(f"La columna {nuevo_nombre} no es Serie en {hoja}, se omite conversión.")
+                    serie = col_data
+                df_merge[nuevo_nombre] = pd.to_numeric(serie, errors="coerce")
+                # Forzar unicidad de columnas (eliminar duplicados)
+                df_merge = df_merge.loc[:, ~df_merge.columns.duplicated()]
             else:
                 st.warning(f"No se creó la columna {nuevo_nombre} en {hoja}.")
 
