@@ -430,12 +430,20 @@ if uploaded_file and uploaded_consolidado:
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
 
-            # Unir por clave normalizada
+            # Unir por clave normalizada (solo traemos la nota y la renombramos)
             df_merge = df_cons.merge(
-                df_new[["__key", col_puntaje_new]], on="__key", how="left"
+                df_new[["__key", col_puntaje_new]].rename(columns={col_puntaje_new: nuevo_nombre}),
+                on="__key", how="left"
             )
 
-            # Renombrar y convertir a numérico
+            # Asegurar tipo numérico
+            df_merge[nuevo_nombre] = pd.to_numeric(df_merge[nuevo_nombre], errors="coerce")
+
+            # Limpiar columnas auxiliares y duplicadas
+            df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
+            for c in list(df_merge.columns):
+                if c.endswith("_x") or c.endswith("_y"):
+                    df_merge.drop(columns=[c], inplace=True, errors="ignore")
             if col_puntaje_new in df_merge.columns:
                 df_merge.rename(columns={col_puntaje_new: nuevo_nombre}, inplace=True)
             if nuevo_nombre in df_merge.columns:
