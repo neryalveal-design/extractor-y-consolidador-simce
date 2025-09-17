@@ -102,7 +102,7 @@ def _parse_numeric_series(series: pd.Series) -> pd.Series:
 
 def _detectar_col_puntaje(df: pd.DataFrame):
     """Devuelve el nombre de la columna de puntaje en un normalizado/consolidado."""
-    preferidas = ["Puntaje Ensayo 1", "SIMCE 1"]
+    preferidas = ["Puntaje Ensayo 1", "FK", "TOTAL"]
     for c in preferidas:
         if c in df.columns:
             return c
@@ -400,28 +400,51 @@ if uploaded_file and uploaded_consolidado:
             df_cons["__key"] = df_cons[col_nombres].map(_norm)
             df_new["__key"]  = df_new["NOMBRE ESTUDIANTE"].map(_norm)
 
-            # Unir por clave normalizada (solo traemos la nota)
+            # Determinar el nombre del nuevo puntaje (correlativo)
+            n_existentes = sum("Puntaje Ensayo" in str(c) for c in df_cons.columns)
+            nuevo_nombre = f"Puntaje Ensayo {n_existentes + 1}"
+
+            # Detectar la columna de puntajes en df_new
+            col_puntaje_new = None
+            for col in df_new.columns:
+                col_low = str(col).lower().strip()
+                if ("simce" in col_low or "puntaje" in col_low 
+                    or col_low == "total" or col_low == "fk"):
+                    col_puntaje_new = col
+                    break
+
+            if col_puntaje_new is None:
+                st.warning(f"No se encontró columna de puntajes en los datos nuevos para {hoja}.")
+                df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
+                resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
+                continue
+
+            # Unir por clave normalizada
             df_merge = df_cons.merge(
-                df_new[["__key", "SIMCE 1"]], on="__key", how="left"
+                df_new[["__key", col_puntaje_new]], on="__key", how="left"
             )
 
-            # Crear la nueva columna con tipo numérico
-            df_merge["SIMCE Nuevo"] = pd.to_numeric(df_merge["SIMCE 1"], errors="coerce")
+            # Renombrar la columna detectada al nombre correlativo
+            if col_puntaje_new in df_merge.columns:
+                df_merge.rename(columns={col_puntaje_new: nuevo_nombre}, inplace=True)
 
-            # Eliminar TODAS las columnas auxiliares que podrían colarse al final
-            df_merge.drop(columns=["__key", "SIMCE 1"], inplace=True, errors="ignore")
-            # MUY IMPORTANTE: no dejar la "NOMBRE ESTUDIANTE" del lado derecho del merge
+            # Convertir a numérico si existe
+            if nuevo_nombre in df_merge.columns:
+                df_merge[nuevo_nombre] = pd.to_numeric(df_merge[nuevo_nombre], errors="coerce")
+            else:
+                st.warning(f"No se pudo agregar puntajes en {hoja}.")
+
+            # Eliminar auxiliares
+            df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
             if "NOMBRE ESTUDIANTE" in df_merge.columns and "NOMBRE ESTUDIANTE" != col_nombres:
                 df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
 
-            # Contar coincidencias
-            # Calcular coincidencias usando el último puntaje agregado
+            # Calcular coincidencias
             if nuevo_nombre in df_merge.columns:
                 coinc = int(df_merge[nuevo_nombre].notna().sum())
                 sin_coinc = len(df_merge) - coinc
             else:
-                coinc = 0
-                sin_coinc = len(df_merge)
+                coinc, sin_coinc = 0, len(df_merge)
 
             resumen.append({
                 "Hoja": hoja,
@@ -430,7 +453,7 @@ if uploaded_file and uploaded_consolidado:
             })
 
             # Guardar hoja
-            df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])
+            df_merge.to_excel(writer, index=False, sheet_name=hoja[:31])(writer, index=False, sheet_name=hoja[:31])
 
     # Mostrar resumen y permitir descarga
     st.subheader("📋 Resumen de consolidación")
