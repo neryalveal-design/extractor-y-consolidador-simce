@@ -385,6 +385,13 @@ if uploaded_file and uploaded_consolidado:
             try:
                 df_raw = pd.read_excel(xls_comp, sheet_name=hoja, header=None)
                 df_new = extraer_datos(df_raw) if 'extraer_datos' in globals() else None
+                if df_new is not None:
+                    # Normalizar nombres de columnas y mostrar debug
+                    df_new.columns = df_new.columns.astype(str).str.strip()
+                    st.write(f"
+### Debug columnas en {hoja}:")
+                    st.write(list(df_new.columns))
+                    st.dataframe(df_new.head())
             except Exception:
                 df_new = None
 
