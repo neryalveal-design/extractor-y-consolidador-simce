@@ -436,10 +436,17 @@ if uploaded_file and uploaded_consolidado:
                 on="__key", how="left"
             )
 
-            # Asegurar tipo numérico
-            df_merge[nuevo_nombre] = pd.to_numeric(df_merge[nuevo_nombre], errors="coerce")
+            # Asegurar tipo numérico solo si la columna fue creada
+            if nuevo_nombre in df_merge.columns:
+                df_merge[nuevo_nombre] = pd.to_numeric(df_merge[nuevo_nombre], errors="coerce")
+            else:
+                st.warning(f"No se creó la columna {nuevo_nombre} en {hoja}.")
 
             # Limpiar columnas auxiliares y duplicadas
+            df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
+            for c in list(df_merge.columns):
+                if c.endswith("_x") or c.endswith("_y"):
+                    df_merge.drop(columns=[c], inplace=True, errors="ignore")
             df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
             for c in list(df_merge.columns):
                 if c.endswith("_x") or c.endswith("_y"):
