@@ -473,7 +473,18 @@ if uploaded_file and uploaded_consolidado:
             if col_puntaje_new in df_merge.columns:
                 df_merge.rename(columns={col_puntaje_new: nuevo_nombre}, inplace=True)
             if nuevo_nombre in df_merge.columns:
-                df_merge[nuevo_nombre] = pd.to_numeric(df_merge[nuevo_nombre], errors="coerce")
+                # Conversión segura a numérico
+if nuevo_nombre in df_merge.columns:
+    col_data = df_merge[nuevo_nombre]
+    if isinstance(col_data, pd.DataFrame):
+        serie = col_data.iloc[:, 0]   # tomar la primera si hay duplicados
+    else:
+        serie = col_data
+    df_merge[nuevo_nombre] = pd.to_numeric(serie, errors="coerce")
+    # eliminar duplicados de columnas
+    df_merge = df_merge.loc[:, ~df_merge.columns.duplicated()]
+else:
+    st.warning(f"No se creó la columna {nuevo_nombre} en {hoja}.")
 
             # Eliminar auxiliares
             df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
