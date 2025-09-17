@@ -390,8 +390,8 @@ if uploaded_file and uploaded_consolidado:
 
             if df_new is None or df_new.empty or "NOMBRE ESTUDIANTE" not in df_new.columns:
                 # No hay datos nuevos; agregar columna vacía (si no existe) y guardar
-                if "SIMCE Nuevo" not in df_cons.columns:
-                    df_cons["SIMCE Nuevo"] = pd.NA
+                if "Puntaje Ensayo X (obsoleto)" not in df_cons.columns:
+                    df_cons["Puntaje Ensayo X (obsoleto)"] = pd.NA
                 df_cons.to_excel(writer, index=False, sheet_name=hoja[:31])
                 resumen.append({"Hoja": hoja, "Coincidencias": 0, "Sin coincidencia": len(df_cons)})
                 continue
@@ -404,10 +404,11 @@ if uploaded_file and uploaded_consolidado:
             n_existentes = sum("Puntaje Ensayo" in str(c) for c in df_cons.columns)
             nuevo_nombre = f"Puntaje Ensayo {n_existentes + 1}"
 
+            # Normalizar columnas en df_new
+            df_new.columns = df_new.columns.astype(str).str.strip()
+
             # Detectar la columna de puntajes en df_new
             col_puntaje_new = None
-
-            # Caso especial: si viene "Puntaje Ensayo 1", usarla directo
             if "Puntaje Ensayo 1" in df_new.columns:
                 col_puntaje_new = "Puntaje Ensayo 1"
             else:
@@ -417,8 +418,6 @@ if uploaded_file and uploaded_consolidado:
                         or col_low == "total" or col_low == "fk"):
                         col_puntaje_new = col
                         break
-
-            # Fallback: primera columna numérica válida
             if col_puntaje_new is None:
                 for col in df_new.columns:
                     if col not in ("NOMBRE ESTUDIANTE", "__key") and pd.api.types.is_numeric_dtype(df_new[col]):
@@ -436,15 +435,11 @@ if uploaded_file and uploaded_consolidado:
                 df_new[["__key", col_puntaje_new]], on="__key", how="left"
             )
 
-            # Renombrar la columna detectada al nombre correlativo
+            # Renombrar y convertir a numérico
             if col_puntaje_new in df_merge.columns:
                 df_merge.rename(columns={col_puntaje_new: nuevo_nombre}, inplace=True)
-
-            # Convertir a numérico si existe
             if nuevo_nombre in df_merge.columns:
                 df_merge[nuevo_nombre] = pd.to_numeric(df_merge[nuevo_nombre], errors="coerce")
-            else:
-                st.warning(f"No se pudo agregar puntajes en {hoja}.")
 
             # Eliminar auxiliares
             df_merge.drop(columns=["__key"], inplace=True, errors="ignore")
@@ -457,7 +452,6 @@ if uploaded_file and uploaded_consolidado:
                 sin_coinc = len(df_merge) - coinc
             else:
                 coinc, sin_coinc = 0, len(df_merge)
-
             resumen.append({
                 "Hoja": hoja,
                 "Coincidencias": coinc,
