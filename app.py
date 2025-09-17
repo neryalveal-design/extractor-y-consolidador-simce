@@ -441,15 +441,15 @@ if uploaded_file and uploaded_consolidado:
                 df_merge.rename(columns={col_puntaje_new: nuevo_nombre}, inplace=True)
 
             # Convertir a numérico si existe
-            if nuevo_nombre in df_merge.columns:
+
         # Conversión segura a numérico
-        if nuevo_nombre in df_merge.columns:
+
             col_data = df_merge[nuevo_nombre]
             if isinstance(col_data, pd.DataFrame):
                 serie = col_data.iloc[:, 0]   # tomar la primera si hay duplicados
             else:
                 serie = col_data
-            df_merge[nuevo_nombre] = pd.to_numeric(serie, errors="coerce")
+
             # eliminar duplicados de columnas
             df_merge = df_merge.loc[:, ~df_merge.columns.duplicated()]
         else:
@@ -463,7 +463,7 @@ if uploaded_file and uploaded_consolidado:
                 df_merge.drop(columns=["NOMBRE ESTUDIANTE"], inplace=True)
 
             # Calcular coincidencias
-            if nuevo_nombre in df_merge.columns:
+
                 coinc = int(df_merge[nuevo_nombre].notna().sum())
                 sin_coinc = len(df_merge) - coinc
             else:
